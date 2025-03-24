@@ -151,3 +151,11 @@ Costs for the CrowdStrike deployment will primarily be concentrated in the defau
 1. The costs are primarily concentrated in the default subscription.
 2. All other subscriptions only have diagnostic settings configured.
 3. Resource names with `{subscription_id}` or `{randomsuffix}` will have dynamic values generated during deployment.
+
+## Official Resources
+
+The official CrowdStrike Azure Bicep templates are the source of truth for deployment code and cost estimation:
+
+- **GitHub Repository**: [https://github.com/CrowdStrike/cs-azure-integration-bicep](https://github.com/CrowdStrike/cs-azure-integration-bicep)
+- This repository contains the official Bicep templates for deploying CrowdStrike resources in Azure
+- All cost estimation approaches and code are based on the resources defined in these templates
