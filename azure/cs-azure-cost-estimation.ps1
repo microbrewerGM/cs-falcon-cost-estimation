@@ -83,8 +83,9 @@ if ([string]::IsNullOrWhiteSpace($LogFilePath)) {
     $LogFilePath = Join-Path $OutputDirectory "cs-azure-cost-estimate.log"
 }
 
-# Path for the summary JSON file
+# Path for the summary JSON file and status file
 $SummaryJsonPath = Join-Path $OutputDirectory "summary.json"
+$StatusFilePath = Join-Path $OutputDirectory "script-status.json"
 
 # Function to write to log file
 function Write-Log {
@@ -157,6 +158,53 @@ function Show-Progress {
     
     Write-Progress -Activity $Activity -Status $Status -PercentComplete $PercentComplete
     Write-Log "$Activity - $Status ($PercentComplete%)" -Level 'INFO'
+}
+
+# Function to save script status for resumption
+function Save-ScriptStatus {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$StatusFilePath,
+        
+        [Parameter(Mandatory = $true)]
+        [hashtable]$StatusData
+    )
+    
+    try {
+        $jsonData = $StatusData | ConvertTo-Json -Depth 5
+        Set-Content -Path $StatusFilePath -Value $jsonData -ErrorAction Stop
+        Write-Log "Script status saved to $StatusFilePath" -Level 'INFO'
+        return $true
+    }
+    catch {
+        Write-Log "Failed to save script status: $($_.Exception.Message)" -Level 'WARNING'
+        return $false
+    }
+}
+
+# Function to check if a status file exists and load it
+function Get-ScriptStatus {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$StatusFilePath
+    )
+    
+    if (Test-Path $StatusFilePath) {
+        try {
+            $jsonContent = Get-Content -Path $StatusFilePath -Raw -ErrorAction Stop
+            $status = $jsonContent | ConvertFrom-Json
+            Write-Log "Found existing script status, can resume from subscription $($status.LastProcessedSubscription)" -Level 'INFO'
+            return $status
+        }
+        catch {
+            Write-Log "Error loading script status: $($_.Exception.Message)" -Level 'WARNING'
+            return $null
+        }
+    }
+    else {
+        Write-Log "No status file found, starting fresh" -Level 'INFO'
+        return $null
+    }
 }
 
 # Function to prompt user to select a subscription
@@ -574,6 +622,25 @@ else {
 # Get regional pricing information
 $regionPricing = Get-RegionPricing
 
+# Check for existing status file and ask if user wants to resume
+$scriptStatus = Get-ScriptStatus -StatusFilePath $StatusFilePath
+$resumeExecution = $false
+$processedSubscriptionIds = @()
+
+if ($scriptStatus -and $scriptStatus.LastProcessedSubscription) {
+    $resumePrompt = Read-Host "Previous execution was interrupted. Do you want to resume processing from the last subscription? (Y/N)"
+    if ($resumePrompt -eq "Y" -or $resumePrompt -eq "y") {
+        $resumeExecution = $true
+        $processedSubscriptionIds = $scriptStatus.ProcessedSubscriptionIds
+        Write-Log "Resuming execution. $($processedSubscriptionIds.Count) subscriptions were already processed." -Level 'INFO'
+    }
+    else {
+        Write-Log "Starting fresh execution, ignoring previous progress." -Level 'INFO'
+        # Remove the status file since we're starting fresh
+        Remove-Item -Path $StatusFilePath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # Process each subscription
 $totalSubscriptions = $subscriptions.Count
 $currentSubscription = 0
@@ -583,6 +650,12 @@ foreach ($subscription in $subscriptions) {
     $subscriptionId = $subscription.Id
     $isDefaultSubscription = ($subscriptionId -eq $DefaultSubscriptionId)
     $percentComplete = [math]::Floor(($currentSubscription / $totalSubscriptions) * 90) + 5
+    
+    # Skip already processed subscriptions if resuming
+    if ($resumeExecution -and $processedSubscriptionIds -contains $subscriptionId) {
+        Write-Log "Skipping subscription $($subscription.Name) ($subscriptionId) - already processed" -Level 'INFO'
+        continue
+    }
     
     Show-Progress -Activity "Processing subscription" -PercentComplete $percentComplete -Status "$($subscription.Name) ($currentSubscription of $totalSubscriptions)"
     
@@ -820,6 +893,22 @@ foreach ($subscription in $subscriptions) {
     # Save subscription data to disk (instead of storing in memory)
     Save-SubscriptionData -SubscriptionData $subscriptionData -SubscriptionDataDir $SubscriptionDataDir
     $processedSubscriptionCount++
+    
+    # Update and save script status
+    if ($processedSubscriptionIds -notcontains $subscriptionId) {
+        $processedSubscriptionIds += $subscriptionId
+    }
+    
+    $statusData = @{
+        LastUpdated = Get-Date
+        LastProcessedSubscription = $subscriptionId
+        LastProcessedSubscriptionName = $subscription.Name
+        ProcessedSubscriptionIds = $processedSubscriptionIds
+        ProcessedCount = $processedSubscriptionIds.Count
+        TotalSubscriptionCount = $totalSubscriptions
+        Progress = "$($processedSubscriptionIds.Count) of $totalSubscriptions"
+    }
+    Save-ScriptStatus -StatusFilePath $StatusFilePath -StatusData $statusData
     
     # Free up memory by clearing large objects
     $activityLogs = $null
