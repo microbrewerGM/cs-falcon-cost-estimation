@@ -1,5 +1,36 @@
-# Fixed version of CrowdStrike Azure Cost Estimation Tool
-# This script now properly handles paging with the Azure REST API instead of using deprecated Get-AzActivityLog
+<#
+.SYNOPSIS
+CrowdStrike Azure Cost Estimation Tool
+
+.DESCRIPTION
+This script estimates the costs of deploying CrowdStrike Falcon Cloud Security integration in Azure.
+It analyzes subscription data, activity logs, Entra ID logs, and resource counts to provide
+cost estimates for the deployment based on the official CrowdStrike Bicep templates.
+
+.PARAMETER DaysToAnalyze
+Number of days of logs to analyze. Default is 7.
+
+.PARAMETER DefaultSubscriptionId
+The subscription ID where CrowdStrike resources will be deployed. If not specified, the script
+will prompt for selection.
+
+.PARAMETER OutputFilePath
+Path to the CSV output file. Default is "cs-azure-cost-estimate-<timestamp>.csv" in the current directory.
+
+.PARAMETER LogFilePath
+Path to the log file. Default is "cs-azure-cost-estimate-<timestamp>.log" in the current directory.
+
+.EXAMPLE
+.\cs-azure-cost-estimation.ps1 -DaysToAnalyze 14
+
+.NOTES
+Requires Azure PowerShell module and appropriate permissions to query:
+- Subscriptions
+- Activity Logs
+- Entra ID logs (requires Global Reader, Security Reader, or higher permissions)
+- Resource information
+#>
+
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $false)]
@@ -9,46 +40,11 @@ param(
     [string]$DefaultSubscriptionId,
 
     [Parameter(Mandatory = $false)]
-    [string]$OutputDirectory = "",
+    [string]$OutputFilePath = "cs-azure-cost-estimate-$(Get-Date -Format 'yyyyMMdd-HHmmss').csv",
 
     [Parameter(Mandatory = $false)]
-    [string]$OutputFilePath = "",
-
-    [Parameter(Mandatory = $false)]
-    [string]$LogFilePath = ""
+    [string]$LogFilePath = "cs-azure-cost-estimate-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
 )
-
-# Create timestamped output directory if not specified
-$timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = "cs-azure-cost-estimate-$timestamp"
-}
-
-# Create the output directory if it doesn't exist
-if (-not (Test-Path $OutputDirectory)) {
-    New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null
-    Write-Host "Created output directory: $OutputDirectory" -ForegroundColor Green
-}
-
-# Create a subdirectory for subscription data files
-$SubscriptionDataDir = Join-Path $OutputDirectory "subscription-data"
-if (-not (Test-Path $SubscriptionDataDir)) {
-    New-Item -Path $SubscriptionDataDir -ItemType Directory -Force | Out-Null
-    Write-Host "Created subscription data directory: $SubscriptionDataDir" -ForegroundColor Green
-}
-
-# Set default file paths if not specified
-if ([string]::IsNullOrWhiteSpace($OutputFilePath)) {
-    $OutputFilePath = Join-Path $OutputDirectory "cs-azure-cost-estimate.csv"
-}
-
-if ([string]::IsNullOrWhiteSpace($LogFilePath)) {
-    $LogFilePath = Join-Path $OutputDirectory "cs-azure-cost-estimate.log"
-}
-
-# Path for the summary JSON file and status file
-$SummaryJsonPath = Join-Path $OutputDirectory "summary.json"
-$StatusFilePath = Join-Path $OutputDirectory "script-status.json"
 
 # Function to write to log file
 function Write-Log {
@@ -121,53 +117,6 @@ function Show-Progress {
     
     Write-Progress -Activity $Activity -Status $Status -PercentComplete $PercentComplete
     Write-Log "$Activity - $Status ($PercentComplete%)" -Level 'INFO'
-}
-
-# Function to save script status for resumption
-function Save-ScriptStatus {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$StatusFilePath,
-        
-        [Parameter(Mandatory = $true)]
-        [hashtable]$StatusData
-    )
-    
-    try {
-        $jsonData = $StatusData | ConvertTo-Json -Depth 5
-        Set-Content -Path $StatusFilePath -Value $jsonData -ErrorAction Stop
-        Write-Log "Script status saved to $StatusFilePath" -Level 'INFO'
-        return $true
-    }
-    catch {
-        Write-Log "Failed to save script status: $($_.Exception.Message)" -Level 'WARNING'
-        return $false
-    }
-}
-
-# Function to check if a status file exists and load it
-function Get-ScriptStatus {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$StatusFilePath
-    )
-    
-    if (Test-Path $StatusFilePath) {
-        try {
-            $jsonContent = Get-Content -Path $StatusFilePath -Raw -ErrorAction Stop
-            $status = $jsonContent | ConvertFrom-Json
-            Write-Log "Found existing script status, can resume from subscription $($status.LastProcessedSubscription)" -Level 'INFO'
-            return $status
-        }
-        catch {
-            Write-Log "Error loading script status: $($_.Exception.Message)" -Level 'WARNING'
-            return $null
-        }
-    }
-    else {
-        Write-Log "No status file found, starting fresh" -Level 'INFO'
-        return $null
-    }
 }
 
 # Function to prompt user to select a subscription
@@ -270,99 +219,6 @@ function Get-PricingForRegion {
     else {
         Write-Log "No specific pricing found for region $Region. Using default pricing." -Level 'WARNING'
         return $PricingData["default"]
-    }
-}
-
-# Function to save subscription data to disk
-function Save-SubscriptionData {
-    param (
-        [Parameter(Mandatory = $true)]
-        [PSCustomObject]$SubscriptionData,
-        
-        [Parameter(Mandatory = $true)]
-        [string]$SubscriptionDataDir
-    )
-    
-    $filePath = Join-Path $SubscriptionDataDir "$($SubscriptionData.SubscriptionId).json"
-    
-    try {
-        # Convert PSCustomObject to JSON and save to file
-        $jsonData = $SubscriptionData | ConvertTo-Json -Depth 10
-        Set-Content -Path $filePath -Value $jsonData -ErrorAction Stop
-        Write-Log "Saved subscription data to $filePath" -Level 'INFO'
-        return $true
-    }
-    catch {
-        Write-Log "Failed to save subscription data: $($_.Exception.Message)" -Level 'ERROR'
-        return $false
-    }
-}
-
-# Function to load all subscription data from disk
-function Get-AllSubscriptionData {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$SubscriptionDataDir
-    )
-    
-    $subscriptionData = @()
-    
-    try {
-        $files = Get-ChildItem -Path $SubscriptionDataDir -Filter "*.json" -ErrorAction Stop
-        
-        foreach ($file in $files) {
-            try {
-                $jsonContent = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
-                $subData = $jsonContent | ConvertFrom-Json
-                $subscriptionData += $subData
-                Write-Log "Loaded subscription data from $($file.Name)" -Level 'INFO'
-            }
-            catch {
-                Write-Log "Error loading subscription data from $($file.Name): $($_.Exception.Message)" -Level 'WARNING'
-            }
-        }
-    }
-    catch {
-        Write-Log "Error accessing subscription data directory: $($_.Exception.Message)" -Level 'ERROR'
-    }
-    
-    return $subscriptionData
-}
-
-# Function to update a subscription's data file on disk
-function Update-SubscriptionDataFile {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$SubscriptionId,
-        
-        [Parameter(Mandatory = $true)]
-        [string]$SubscriptionDataDir,
-        
-        [Parameter(Mandatory = $true)]
-        [hashtable]$Updates
-    )
-    
-    $filePath = Join-Path $SubscriptionDataDir "$SubscriptionId.json"
-    
-    try {
-        # Read existing data
-        $jsonContent = Get-Content -Path $filePath -Raw -ErrorAction Stop
-        $subscriptionData = $jsonContent | ConvertFrom-Json
-        
-        # Apply updates
-        foreach ($key in $Updates.Keys) {
-            $subscriptionData.$key = $Updates[$key]
-        }
-        
-        # Save updated data
-        $updatedJson = $subscriptionData | ConvertTo-Json -Depth 10
-        Set-Content -Path $filePath -Value $updatedJson -ErrorAction Stop
-        Write-Log "Updated subscription data in $filePath" -Level 'INFO'
-        return $true
-    }
-    catch {
-        Write-Log "Failed to update subscription data: $($_.Exception.Message)" -Level 'ERROR'
-        return $false
     }
 }
 
@@ -519,8 +375,8 @@ else {
     Write-Log "Successfully authenticated with Az PowerShell module" -Level 'SUCCESS'
 }
 
-# Initialize counter for processed subscriptions
-$processedSubscriptionCount = 0
+# Initialize results array
+$results = @()
 
 # Get all subscriptions
 Show-Progress -Activity "Collecting data" -PercentComplete 5 -Status "Getting subscriptions"
@@ -585,25 +441,6 @@ else {
 # Get regional pricing information
 $regionPricing = Get-RegionPricing
 
-# Check for existing status file and ask if user wants to resume
-$scriptStatus = Get-ScriptStatus -StatusFilePath $StatusFilePath
-$resumeExecution = $false
-$processedSubscriptionIds = @()
-
-if ($scriptStatus -and $scriptStatus.LastProcessedSubscription) {
-    $resumePrompt = Read-Host "Previous execution was interrupted. Do you want to resume processing from the last subscription? (Y/N)"
-    if ($resumePrompt -eq "Y" -or $resumePrompt -eq "y") {
-        $resumeExecution = $true
-        $processedSubscriptionIds = $scriptStatus.ProcessedSubscriptionIds
-        Write-Log "Resuming execution. $($processedSubscriptionIds.Count) subscriptions were already processed." -Level 'INFO'
-    }
-    else {
-        Write-Log "Starting fresh execution, ignoring previous progress." -Level 'INFO'
-        # Remove the status file since we're starting fresh
-        Remove-Item -Path $StatusFilePath -Force -ErrorAction SilentlyContinue
-    }
-}
-
 # Process each subscription
 $totalSubscriptions = $subscriptions.Count
 $currentSubscription = 0
@@ -613,12 +450,6 @@ foreach ($subscription in $subscriptions) {
     $subscriptionId = $subscription.Id
     $isDefaultSubscription = ($subscriptionId -eq $DefaultSubscriptionId)
     $percentComplete = [math]::Floor(($currentSubscription / $totalSubscriptions) * 90) + 5
-    
-    # Skip already processed subscriptions if resuming
-    if ($resumeExecution -and $processedSubscriptionIds -contains $subscriptionId) {
-        Write-Log "Skipping subscription $($subscription.Name) ($subscriptionId) - already processed" -Level 'INFO'
-        continue
-    }
     
     Show-Progress -Activity "Processing subscription" -PercentComplete $percentComplete -Status "$($subscription.Name) ($currentSubscription of $totalSubscriptions)"
     
@@ -695,107 +526,13 @@ foreach ($subscription in $subscriptions) {
         
         try {
             # This might fail due to permissions, but we'll continue
-            # Use Az REST API instead of the deprecated Get-AzActivityLog cmdlet
-            # Implement paging to handle more than 1000 results (the default page size)
-            
-            $activityLogs = @()
-            $pageCount = 0
-            $totalLogsRetrieved = 0
-            $filter = "eventTimestamp ge '${startTime}' and eventTimestamp le '${endTime}'"
-            $skipToken = $null
-            
-            Write-Log "Starting activity log retrieval for subscription $($subscription.Name)" -Level 'INFO'
-            Write-Log "Time range: $startTime to $endTime" -Level 'INFO'
-            
-            # First, try to get an estimate of total logs (API may not support count)
-            try {
-                $estimateUri = "/subscriptions/$subscriptionId/providers/Microsoft.Insights/eventtypes/management/values?api-version=2017-03-01-preview&`$filter=$filter&`$top=1"
-                $estimateResponse = Invoke-AzRestMethod -Method GET -Path $estimateUri -ErrorAction Stop
-                
-                if ($estimateResponse.StatusCode -eq 200) {
-                    $estimateContent = $estimateResponse.Content | ConvertFrom-Json
-                    if ($estimateContent.nextLink -and $estimateContent.nextLink -match "skipToken") {
-                        Write-Log "Activity log query will require multiple pages (default page size is ~1000 records)" -Level 'INFO'
-                    }
-                }
-            }
-            catch {
-                Write-Log "Could not determine total log count: $($_.Exception.Message)" -Level 'WARNING'
-            }
-            
-            do {
-                $pageCount++
-                
-                # Build the request URL with proper paging
-                $apiVersion = "2017-03-01-preview"
-                $requestURI = "/subscriptions/$subscriptionId/providers/Microsoft.Insights/eventtypes/management/values?api-version=$apiVersion&`$filter=$filter"
-                
-                # Add skipToken for pagination if it exists
-                if ($skipToken) {
-                    $requestURI += "&`$skipToken=$skipToken"
-                }
-                
-                try {
-                    Write-Log "Retrieving activity logs page $pageCount..." -Level 'INFO'
-                    
-                    # Make the REST API call
-                    $response = Invoke-AzRestMethod -Method GET -Path $requestURI -ErrorAction Stop
-                    
-                    # Check if the call was successful
-                    if ($response.StatusCode -eq 200) {
-                        $responseContent = $response.Content | ConvertFrom-Json
-                        
-                        if ($responseContent.value) {
-                            $logsPage = $responseContent.value
-                            $activityLogs += $logsPage
-                            $totalLogsRetrieved += $logsPage.Count
-                            
-                            # Log page details with operation types breakdown
-                            $operationTypes = $logsPage | Group-Object -Property OperationName | 
-                                              Select-Object Name, Count | Sort-Object -Property Count -Descending
-                            
-                            $topOperations = $operationTypes | Select-Object -First 3
-                            $topOperationsText = ($topOperations | ForEach-Object { "$($_.Name): $($_.Count)" }) -join ", "
-                            
-                            Write-Log "Page $pageCount: Retrieved $($logsPage.Count) activity logs (Total: $totalLogsRetrieved)" -Level 'INFO'
-                            Write-Log "  Top operations: $topOperationsText" -Level 'INFO'
-                            
-                            # Get the skipToken for the next page, if present
-                            $skipToken = $responseContent.nextLink
-                            if ($skipToken) {
-                                # Extract the skipToken from the nextLink URL
-                                if ($skipToken -match "\`$skipToken=([^&]+)") {
-                                    $skipToken = $Matches[1]
-                                }
-                                else {
-                                    $skipToken = $null
-                                }
-                            }
-                        }
-                        else {
-                            $logsPage = @()
-                        }
-                    }
-                    else {
-                        Write-Log "Failed to retrieve activity logs: StatusCode $($response.StatusCode)" -Level 'WARNING'
-                        break
-                    }
-                }
-                catch {
-                    Write-Log "Error calling Azure REST API: $($_.Exception.Message)" -Level 'WARNING'
-                    break
-                }
-
-                # Continue until we don't have any more logs or a skipToken
-            } while ($logsPage.Count -gt 0 -and $skipToken)
-
-            $activityLogCount = $activityLogs.Count
+            $activityLogCount = Get-AzLog -StartTime $startTime -EndTime $endTime -ErrorAction Stop | Measure-Object | Select-Object -ExpandProperty Count
             $subscriptionData.ActivityLogCount = $activityLogCount
-
+            
             # Calculate daily average
             $subscriptionData.DailyAverage = [math]::Round($activityLogCount / $DaysToAnalyze, 2)
-
-            Write-Log "Total activity log count: $activityLogCount Daily average: $($subscriptionData.DailyAverage)" -Level 'INFO'
+            
+            Write-Log "Activity log count: $activityLogCount, Daily average: $($subscriptionData.DailyAverage)" -Level 'INFO'
         }
         catch {
             Write-Log "Failed to get activity logs for subscription $($subscription.Name): $($_.Exception.Message)" -Level 'WARNING'
@@ -810,19 +547,19 @@ foreach ($subscription in $subscriptions) {
         $subscriptionData.DailyAverage = [math]::Round(1000 / $DaysToAnalyze, 2)
         Write-Log "Using estimated activity log count of 1000 for subscription $($subscription.Name)" -Level 'WARNING'
     }
-
+    
     # Get resource counts
     if ($contextSet) {
         try {
             $resources = Get-AzResource -ErrorAction Stop
             $subscriptionData.ResourceCount = $resources.Count
-
+            
             # Group resources by type
-            $resourceCounts = $resources | Group-Object -Property ResourceType |
-                              Select-Object @{Name="ResourceType"; Expression={$_.Name}}, Count
-
+            $resourceCounts = $resources | Group-Object -Property ResourceType | 
+                            Select-Object @{Name="ResourceType"; Expression={$_.Name}}, Count
+            
             Write-Log "Resource count: $($subscriptionData.ResourceCount)" -Level 'INFO'
-
+            
             # Log resource breakdown
             foreach ($resourceType in $resourceCounts) {
                 Write-Log "  - $($resourceType.ResourceType): $($resourceType.Count)" -Level 'INFO'
@@ -838,27 +575,19 @@ foreach ($subscription in $subscriptions) {
         $subscriptionData.ResourceCount = 100  # Default estimate
         Write-Log "Using estimated resource count of 100 for subscription $($subscription.Name)" -Level 'WARNING'
     }
-
+    
     # Activity logs - assume avg size of 1KB per log
     $activityLogSizeKB = $subscriptionData.DailyAverage * 1  # 1KB per log estimate
-
+    
     # Calculate ingress events per day (each log is an event)
     $ingressEventsPerDay = $subscriptionData.DailyAverage
-
+    
     # Add to results
     $subscriptionData.EstimatedDailyEventHubIngress = $activityLogSizeKB
     $subscriptionData.EstimatedDailyEventCount = $ingressEventsPerDay
-
-    # Save subscription data to disk
-    Save-SubscriptionData -SubscriptionData $subscriptionData -SubscriptionDataDir $SubscriptionDataDir
-
-    # Update script status
-    $statusData = @{
-        LastProcessedSubscription = $subscriptionId
-        ProcessedSubscriptionIds = $processedSubscriptionIds + @($subscriptionId)
-        LastUpdateTime = Get-Date
-    }
-    Save-ScriptStatus -StatusFilePath $StatusFilePath -StatusData $statusData
+    
+    # Store the subscription data in results array
+    $results += $subscriptionData
 }
 
 # Get Entra ID log metrics (tenant-wide)
@@ -878,32 +607,29 @@ $tenantMetrics = @{
 # Try to get actual metrics if we have permissions
 try {
     Connect-AzureAD -ErrorAction Stop
-
+    
     Write-Log "Successfully connected to Azure AD. Retrieving sign-in and audit log metrics..." -Level 'INFO'
-
-    # This is a simplified approach - in reality you would use the Microsoft Graph API
-    # or Azure AD PowerShell to get actual metrics but this requires high permissions
-
-    # For demonstration we'll estimate based on organization size
+    
+    # This is a simplified approach - in reality, you would use the Microsoft Graph API
+    # or Azure AD PowerShell to get actual metrics, but this requires high permissions
+    
+    # For demonstration, we'll estimate based on organization size
     $users = Get-AzureADUser -All $true | Measure-Object | Select-Object -ExpandProperty Count
     $signInEstimate = $users * 2 * $DaysToAnalyze  # Assume 2 sign-ins per user per day
     $auditEstimate = $users * 0.5 * $DaysToAnalyze  # Assume 0.5 audit events per user per day
-
+    
     $tenantMetrics.SignInLogCount = $signInEstimate
     $tenantMetrics.AuditLogCount = $auditEstimate
     $tenantMetrics.SignInDailyAverage = [math]::Round($signInEstimate / $DaysToAnalyze, 2)
     $tenantMetrics.AuditDailyAverage = [math]::Round($auditEstimate / $DaysToAnalyze, 2)
-
-    Write-Log "Estimated sign-in logs: $signInEstimate Daily average: $($tenantMetrics.SignInDailyAverage)" -Level 'INFO'
-    Write-Log "Estimated audit logs: $auditEstimate Daily average: $($tenantMetrics.AuditDailyAverage)" -Level 'INFO'
+    
+    Write-Log "Estimated sign-in logs: $signInEstimate, Daily average: $($tenantMetrics.SignInDailyAverage)" -Level 'INFO'
+    Write-Log "Estimated audit logs: $auditEstimate, Daily average: $($tenantMetrics.AuditDailyAverage)" -Level 'INFO'
 }
 catch {
     Write-Log "Failed to connect to Azure AD or retrieve metrics: $($_.Exception.Message)" -Level 'WARNING'
     Write-Log "Using default estimates for Entra ID logs" -Level 'WARNING'
 }
-
-# Load all subscription data from disk
-$results = Get-AllSubscriptionData -SubscriptionDataDir $SubscriptionDataDir
 
 # Update default subscription with Entra ID log data
 $defaultSubResult = $results | Where-Object { $_.SubscriptionId -eq $DefaultSubscriptionId }
@@ -911,17 +637,10 @@ $defaultSubResult = $results | Where-Object { $_.SubscriptionId -eq $DefaultSubs
 if ($defaultSubResult) {
     $defaultSubResult.EstimatedDailyEventHubIngress += ($tenantMetrics.SignInDailyAverage + $tenantMetrics.AuditDailyAverage) * 2  # 2KB per Entra ID log estimate
     $defaultSubResult.EstimatedDailyEventCount += ($tenantMetrics.SignInDailyAverage + $tenantMetrics.AuditDailyAverage)
-
+    
     Write-Log "Updated default subscription with Entra ID log estimates" -Level 'INFO'
     Write-Log "Total estimated daily Event Hub ingress: $($defaultSubResult.EstimatedDailyEventHubIngress) KB" -Level 'INFO'
     Write-Log "Total estimated daily event count: $($defaultSubResult.EstimatedDailyEventCount)" -Level 'INFO'
-    
-    # Update the subscription data file on disk
-    $updates = @{
-        EstimatedDailyEventHubIngress = $defaultSubResult.EstimatedDailyEventHubIngress
-        EstimatedDailyEventCount = $defaultSubResult.EstimatedDailyEventCount
-    }
-    Update-SubscriptionDataFile -SubscriptionId $DefaultSubscriptionId -SubscriptionDataDir $SubscriptionDataDir -Updates $updates
 }
 else {
     Write-Log "Default subscription not found in results! This is unexpected." -Level 'ERROR'
@@ -934,55 +653,45 @@ foreach ($subscriptionResult in $results) {
     # Convert KB to MB per second for Event Hub throughput calculation
     $mbPerDay = $subscriptionResult.EstimatedDailyEventHubIngress / 1024
     $mbPerSecond = $mbPerDay / 86400  # seconds in a day
-
+    
     # Event Hub TUs (min 2, max 10)
     $estimatedTUs = [Math]::Max(2, [Math]::Min(10, [Math]::Ceiling($mbPerSecond)))
     $subscriptionResult.EstimatedEventHubTUs = $estimatedTUs
-
+    
     # Calculate storage needed for log retention (30 days)
     $activityLogStorageGB = ($subscriptionResult.EstimatedDailyEventHubIngress * 30) / (1024 * 1024)  # Convert KB to GB
     $subscriptionResult.EstimatedStorageGB = [math]::Round($activityLogStorageGB, 2)
-
+    
     # If this is the default subscription, add storage for Entra ID logs
     if ($subscriptionResult.SubscriptionId -eq $DefaultSubscriptionId) {
         $entraIdLogStorageGB = (($tenantMetrics.SignInDailyAverage + $tenantMetrics.AuditDailyAverage) * 2 * 30) / (1024 * 1024)  # Convert KB to GB
         $subscriptionResult.EstimatedStorageGB += [math]::Round($entraIdLogStorageGB, 2)
-
+        
         # Calculate events per second for Function App scaling
         $eventsPerSecond = $subscriptionResult.EstimatedDailyEventCount / 86400
-
+        
         # Function App instance calculation (P0V3 can handle ~50 events/second per instance)
         $eventsPerInstancePerSecond = 50  # Estimate - would need benchmarking for accuracy
         $estimatedInstances = [Math]::Max(1, [Math]::Min(4, [Math]::Ceiling($eventsPerSecond / $eventsPerInstancePerSecond)))
         $subscriptionResult.EstimatedFunctionAppInstances = $estimatedInstances
     }
-
+    
     # Get appropriate pricing for subscription's region
     $region = $subscriptionResult.Region.Split(',')[0].ToLower()
     $pricing = Get-PricingForRegion -Region $region -PricingData $regionPricing
-
+    
     # Calculate detailed costs
     $isDefault = ($subscriptionResult.SubscriptionId -eq $DefaultSubscriptionId)
     $subscriptionResult.CostDetails = Get-CrowdStrikeResourceCost -SubscriptionData $subscriptionResult -Pricing $pricing -IsDefaultSubscription $isDefault
-
+    
     # Calculate total monthly cost
     $totalCost = 0
     foreach ($costItem in $subscriptionResult.CostDetails.Values) {
         $totalCost += $costItem.MonthlyCost
     }
     $subscriptionResult.EstimatedMonthlyCost = [math]::Round($totalCost, 2)
-
-    Write-Log "Estimated monthly cost for subscription $($subscriptionResult.SubscriptionName): $($subscriptionResult.EstimatedMonthlyCost)" -Level 'INFO'
     
-    # Update subscription data on disk
-    $updates = @{
-        EstimatedEventHubTUs = $subscriptionResult.EstimatedEventHubTUs
-        EstimatedStorageGB = $subscriptionResult.EstimatedStorageGB
-        EstimatedFunctionAppInstances = $subscriptionResult.EstimatedFunctionAppInstances
-        CostDetails = $subscriptionResult.CostDetails
-        EstimatedMonthlyCost = $subscriptionResult.EstimatedMonthlyCost
-    }
-    Update-SubscriptionDataFile -SubscriptionId $subscriptionResult.SubscriptionId -SubscriptionDataDir $SubscriptionDataDir -Updates $updates
+    Write-Log "Estimated monthly cost for subscription $($subscriptionResult.SubscriptionName): $($subscriptionResult.EstimatedMonthlyCost)" -Level 'INFO'
 }
 
 # Prepare CSV data
@@ -1011,7 +720,7 @@ foreach ($sub in $results) {
         DailyAverage = $sub.DailyAverage
         EstimatedMonthlyCost = $sub.EstimatedMonthlyCost
     }
-
+    
     # Add resource-specific cost details
     foreach ($resourceType in $resourceTypes) {
         if ($sub.CostDetails.ContainsKey($resourceType)) {
@@ -1025,7 +734,7 @@ foreach ($sub in $results) {
             $row["${resourceType}_MonthlyCost"] = 0
         }
     }
-
+    
     $csvData += [PSCustomObject]$row
 }
 
@@ -1039,25 +748,6 @@ try {
 catch {
     Write-Log "Failed to export CSV data: $($_.Exception.Message)" -Level 'ERROR'
     $scriptSuccess = $false
-}
-
-# Also save a summary JSON file
-$summary = @{
-    TotalSubscriptions = $results.Count
-    DefaultSubscription = ($results | Where-Object { $_.SubscriptionId -eq $DefaultSubscriptionId }).SubscriptionName
-    DefaultSubscriptionId = $DefaultSubscriptionId
-    TotalMonthlyCost = ($results | Measure-Object -Property EstimatedMonthlyCost -Sum).Sum
-    DefaultSubscriptionCost = ($results | Where-Object { $_.SubscriptionId -eq $DefaultSubscriptionId }).EstimatedMonthlyCost
-    GeneratedAt = Get-Date
-    AnalysisPeriod = $DaysToAnalyze
-}
-
-try {
-    $summary | ConvertTo-Json -Depth 5 | Set-Content -Path $SummaryJsonPath
-    Write-Log "Saved summary to $SummaryJsonPath" -Level 'SUCCESS'
-}
-catch {
-    Write-Log "Failed to save summary JSON: $($_.Exception.Message)" -Level 'WARNING'
 }
 
 # Generate summary
@@ -1085,4 +775,4 @@ else {
     Write-Log "CrowdStrike Azure Cost Estimation completed with warnings. Some data may be incomplete. Results saved to $OutputFilePath" -Level 'WARNING'
 }
 
-Write-Host "`nDetailed results can be found in:`n- CSV: $OutputFilePath`n- Log: $LogFilePath`n- Summary: $SummaryJsonPath" -ForegroundColor Cyan
+Write-Host "`nDetailed results can be found in:`n- CSV: $OutputFilePath`n- Log: $LogFilePath" -ForegroundColor Cyan
