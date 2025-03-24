@@ -26,9 +26,12 @@ Path to the log file. Default is "cs-azure-cost-estimate-<timestamp>.log" in the
 .NOTES
 Requires Azure PowerShell module and appropriate permissions to query:
 - Subscriptions
-- Activity Logs
+- Activity Logs (using Azure REST API instead of deprecated Get-AzActivityLog)
 - Entra ID logs (requires Global Reader, Security Reader, or higher permissions)
 - Resource information
+
+This script implements proper paging for activity log queries to handle more than the
+default limit of 1000 records per query.
 #>
 
 [CmdletBinding()]
@@ -526,13 +529,72 @@ foreach ($subscription in $subscriptions) {
         
         try {
             # This might fail due to permissions, but we'll continue
-            $activityLogCount = Get-AzLog -StartTime $startTime -EndTime $endTime -ErrorAction Stop | Measure-Object | Select-Object -ExpandProperty Count
+            # Use Az REST API instead of the deprecated Get-AzActivityLog cmdlet
+            # Implement paging to handle more than 1000 results (the default page size)
+            
+            $activityLogs = @()
+            $filter = "eventTimestamp ge '${startTime}' and eventTimestamp le '${endTime}'"
+            $skipToken = $null
+            
+            do {
+                # Build the request URL with proper paging
+                $apiVersion = "2017-03-01-preview"
+                $requestURI = "/subscriptions/$subscriptionId/providers/Microsoft.Insights/eventtypes/management/values?api-version=$apiVersion&`$filter=$filter"
+                
+                # Add skipToken for pagination if it exists
+                if ($skipToken) {
+                    $requestURI += "&`$skipToken=$skipToken"
+                }
+                
+                try {
+                    # Make the REST API call
+                    $response = Invoke-AzRestMethod -Method GET -Path $requestURI -ErrorAction Stop
+                    
+                    # Check if the call was successful
+                    if ($response.StatusCode -eq 200) {
+                        $responseContent = $response.Content | ConvertFrom-Json
+                        
+                        if ($responseContent.value) {
+                            $logsPage = $responseContent.value
+                            $activityLogs += $logsPage
+                            Write-Log "Retrieved $($logsPage.Count) activity logs" -Level 'INFO'
+                            
+                            # Get the skipToken for the next page, if present
+                            $skipToken = $responseContent.nextLink
+                            if ($skipToken) {
+                                # Extract the skipToken from the nextLink URL
+                                if ($skipToken -match "\`$skipToken=([^&]+)") {
+                                    $skipToken = $Matches[1]
+                                }
+                                else {
+                                    $skipToken = $null
+                                }
+                            }
+                        }
+                        else {
+                            $logsPage = @()
+                        }
+                    }
+                    else {
+                        Write-Log "Failed to retrieve activity logs: StatusCode $($response.StatusCode)" -Level 'WARNING'
+                        break
+                    }
+                }
+                catch {
+                    Write-Log "Error calling Azure REST API: $($_.Exception.Message)" -Level 'WARNING'
+                    break
+                }
+                
+                # Continue until we don't have any more logs or a skipToken
+            } while ($logsPage.Count -gt 0 -and $skipToken)
+            
+            $activityLogCount = $activityLogs.Count
             $subscriptionData.ActivityLogCount = $activityLogCount
             
             # Calculate daily average
             $subscriptionData.DailyAverage = [math]::Round($activityLogCount / $DaysToAnalyze, 2)
             
-            Write-Log "Activity log count: $activityLogCount, Daily average: $($subscriptionData.DailyAverage)" -Level 'INFO'
+            Write-Log "Total activity log count: $activityLogCount, Daily average: $($subscriptionData.DailyAverage)" -Level 'INFO'
         }
         catch {
             Write-Log "Failed to get activity logs for subscription $($subscription.Name): $($_.Exception.Message)" -Level 'WARNING'
