@@ -14,11 +14,14 @@ Number of days of logs to analyze. Default is 7.
 The subscription ID where CrowdStrike resources will be deployed. If not specified, the script
 will prompt for selection.
 
+.PARAMETER OutputDirectory
+Path to the directory where output files will be saved. Default is "cs-azure-cost-estimate-<timestamp>" in the current directory.
+
 .PARAMETER OutputFilePath
-Path to the CSV output file. Default is "cs-azure-cost-estimate-<timestamp>.csv" in the current directory.
+Path to the CSV output file. Default is "<OutputDirectory>/cs-azure-cost-estimate.csv".
 
 .PARAMETER LogFilePath
-Path to the log file. Default is "cs-azure-cost-estimate-<timestamp>.log" in the current directory.
+Path to the log file. Default is "<OutputDirectory>/cs-azure-cost-estimate.log".
 
 .EXAMPLE
 .\cs-azure-cost-estimation.ps1 -DaysToAnalyze 14
@@ -43,11 +46,35 @@ param(
     [string]$DefaultSubscriptionId,
 
     [Parameter(Mandatory = $false)]
-    [string]$OutputFilePath = "cs-azure-cost-estimate-$(Get-Date -Format 'yyyyMMdd-HHmmss').csv",
+    [string]$OutputDirectory = "",
 
     [Parameter(Mandatory = $false)]
-    [string]$LogFilePath = "cs-azure-cost-estimate-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+    [string]$OutputFilePath = "",
+
+    [Parameter(Mandatory = $false)]
+    [string]$LogFilePath = ""
 )
+
+# Create timestamped output directory if not specified
+$timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+    $OutputDirectory = "cs-azure-cost-estimate-$timestamp"
+}
+
+# Create the output directory if it doesn't exist
+if (-not (Test-Path $OutputDirectory)) {
+    New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null
+    Write-Host "Created output directory: $OutputDirectory" -ForegroundColor Green
+}
+
+# Set default file paths if not specified
+if ([string]::IsNullOrWhiteSpace($OutputFilePath)) {
+    $OutputFilePath = Join-Path $OutputDirectory "cs-azure-cost-estimate.csv"
+}
+
+if ([string]::IsNullOrWhiteSpace($LogFilePath)) {
+    $LogFilePath = Join-Path $OutputDirectory "cs-azure-cost-estimate.log"
+}
 
 # Function to write to log file
 function Write-Log {
