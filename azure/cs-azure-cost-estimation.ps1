@@ -757,8 +757,8 @@ foreach ($subscription in $subscriptions) {
                             $topOperations = $operationTypes | Select-Object -First 3
                             $topOperationsText = ($topOperations | ForEach-Object { "$($_.Name): $($_.Count)" }) -join ", "
                             
-                            Write-Log "Page $pageCount: Retrieved $($logsPage.Count) activity logs (Total: $totalLogsRetrieved)" -Level 'INFO'
-                            Write-Log "  Top operations: $topOperationsText" -Level 'INFO'
+                            Write-Log "Page ${pageCount}: Retrieved $($logsPage.Count) activity logs (Total: $totalLogsRetrieved)" -Level 'INFO'
+                            Write-Log "  Top operations: ${topOperationsText}" -Level 'INFO'
                             
                             # Get the skipToken for the next page, if present
                             $skipToken = $responseContent.nextLink
