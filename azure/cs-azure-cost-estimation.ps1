@@ -663,10 +663,33 @@ foreach ($subscription in $subscriptions) {
             # Implement paging to handle more than 1000 results (the default page size)
             
             $activityLogs = @()
+            $pageCount = 0
+            $totalLogsRetrieved = 0
             $filter = "eventTimestamp ge '${startTime}' and eventTimestamp le '${endTime}'"
             $skipToken = $null
             
+            Write-Log "Starting activity log retrieval for subscription $($subscription.Name)" -Level 'INFO'
+            Write-Log "Time range: $startTime to $endTime" -Level 'INFO'
+            
+            # First, try to get an estimate of total logs (API may not support count)
+            try {
+                $estimateUri = "/subscriptions/$subscriptionId/providers/Microsoft.Insights/eventtypes/management/values?api-version=2017-03-01-preview&`$filter=$filter&`$top=1"
+                $estimateResponse = Invoke-AzRestMethod -Method GET -Path $estimateUri -ErrorAction Stop
+                
+                if ($estimateResponse.StatusCode -eq 200) {
+                    $estimateContent = $estimateResponse.Content | ConvertFrom-Json
+                    if ($estimateContent.nextLink -and $estimateContent.nextLink -match "skipToken") {
+                        Write-Log "Activity log query will require multiple pages (default page size is ~1000 records)" -Level 'INFO'
+                    }
+                }
+            }
+            catch {
+                Write-Log "Could not determine total log count: $($_.Exception.Message)" -Level 'WARNING'
+            }
+            
             do {
+                $pageCount++
+                
                 # Build the request URL with proper paging
                 $apiVersion = "2017-03-01-preview"
                 $requestURI = "/subscriptions/$subscriptionId/providers/Microsoft.Insights/eventtypes/management/values?api-version=$apiVersion&`$filter=$filter"
@@ -677,6 +700,8 @@ foreach ($subscription in $subscriptions) {
                 }
                 
                 try {
+                    Write-Log "Retrieving activity logs page $pageCount..." -Level 'INFO'
+                    
                     # Make the REST API call
                     $response = Invoke-AzRestMethod -Method GET -Path $requestURI -ErrorAction Stop
                     
@@ -687,7 +712,17 @@ foreach ($subscription in $subscriptions) {
                         if ($responseContent.value) {
                             $logsPage = $responseContent.value
                             $activityLogs += $logsPage
-                            Write-Log "Retrieved $($logsPage.Count) activity logs" -Level 'INFO'
+                            $totalLogsRetrieved += $logsPage.Count
+                            
+                            # Log page details with operation types breakdown
+                            $operationTypes = $logsPage | Group-Object -Property OperationName | 
+                                              Select-Object Name, Count | Sort-Object -Property Count -Descending
+                            
+                            $topOperations = $operationTypes | Select-Object -First 3
+                            $topOperationsText = ($topOperations | ForEach-Object { "$($_.Name): $($_.Count)" }) -join ", "
+                            
+                            Write-Log "Page $pageCount: Retrieved $($logsPage.Count) activity logs (Total: $totalLogsRetrieved)" -Level 'INFO'
+                            Write-Log "  Top operations: $topOperationsText" -Level 'INFO'
                             
                             # Get the skipToken for the next page, if present
                             $skipToken = $responseContent.nextLink
@@ -695,10 +730,14 @@ foreach ($subscription in $subscriptions) {
                                 # Extract the skipToken from the nextLink URL
                                 if ($skipToken -match "\`$skipToken=([^&]+)") {
                                     $skipToken = $Matches[1]
+                                    Write-Log "  More logs available, will continue with next page" -Level 'INFO'
                                 }
                                 else {
                                     $skipToken = $null
                                 }
+                            }
+                            else {
+                                Write-Log "  Retrieved all available logs for this time period" -Level 'INFO'
                             }
                         }
                         else {
