@@ -67,6 +67,13 @@ if (-not (Test-Path $OutputDirectory)) {
     Write-Host "Created output directory: $OutputDirectory" -ForegroundColor Green
 }
 
+# Create a subdirectory for subscription data files
+$SubscriptionDataDir = Join-Path $OutputDirectory "subscription-data"
+if (-not (Test-Path $SubscriptionDataDir)) {
+    New-Item -Path $SubscriptionDataDir -ItemType Directory -Force | Out-Null
+    Write-Host "Created subscription data directory: $SubscriptionDataDir" -ForegroundColor Green
+}
+
 # Set default file paths if not specified
 if ([string]::IsNullOrWhiteSpace($OutputFilePath)) {
     $OutputFilePath = Join-Path $OutputDirectory "cs-azure-cost-estimate.csv"
@@ -75,6 +82,9 @@ if ([string]::IsNullOrWhiteSpace($OutputFilePath)) {
 if ([string]::IsNullOrWhiteSpace($LogFilePath)) {
     $LogFilePath = Join-Path $OutputDirectory "cs-azure-cost-estimate.log"
 }
+
+# Path for the summary JSON file
+$SummaryJsonPath = Join-Path $OutputDirectory "summary.json"
 
 # Function to write to log file
 function Write-Log {
@@ -252,6 +262,99 @@ function Get-PricingForRegion {
     }
 }
 
+# Function to save subscription data to disk
+function Save-SubscriptionData {
+    param (
+        [Parameter(Mandatory = $true)]
+        [PSCustomObject]$SubscriptionData,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$SubscriptionDataDir
+    )
+    
+    $filePath = Join-Path $SubscriptionDataDir "$($SubscriptionData.SubscriptionId).json"
+    
+    try {
+        # Convert PSCustomObject to JSON and save to file
+        $jsonData = $SubscriptionData | ConvertTo-Json -Depth 10
+        Set-Content -Path $filePath -Value $jsonData -ErrorAction Stop
+        Write-Log "Saved subscription data to $filePath" -Level 'INFO'
+        return $true
+    }
+    catch {
+        Write-Log "Failed to save subscription data: $($_.Exception.Message)" -Level 'ERROR'
+        return $false
+    }
+}
+
+# Function to load all subscription data from disk
+function Get-AllSubscriptionData {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$SubscriptionDataDir
+    )
+    
+    $subscriptionData = @()
+    
+    try {
+        $files = Get-ChildItem -Path $SubscriptionDataDir -Filter "*.json" -ErrorAction Stop
+        
+        foreach ($file in $files) {
+            try {
+                $jsonContent = Get-Content -Path $file.FullName -Raw -ErrorAction Stop
+                $subData = $jsonContent | ConvertFrom-Json
+                $subscriptionData += $subData
+                Write-Log "Loaded subscription data from $($file.Name)" -Level 'INFO'
+            }
+            catch {
+                Write-Log "Error loading subscription data from $($file.Name): $($_.Exception.Message)" -Level 'WARNING'
+            }
+        }
+    }
+    catch {
+        Write-Log "Error accessing subscription data directory: $($_.Exception.Message)" -Level 'ERROR'
+    }
+    
+    return $subscriptionData
+}
+
+# Function to update a subscription's data file on disk
+function Update-SubscriptionDataFile {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$SubscriptionId,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$SubscriptionDataDir,
+        
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Updates
+    )
+    
+    $filePath = Join-Path $SubscriptionDataDir "$SubscriptionId.json"
+    
+    try {
+        # Read existing data
+        $jsonContent = Get-Content -Path $filePath -Raw -ErrorAction Stop
+        $subscriptionData = $jsonContent | ConvertFrom-Json
+        
+        # Apply updates
+        foreach ($key in $Updates.Keys) {
+            $subscriptionData.$key = $Updates[$key]
+        }
+        
+        # Save updated data
+        $updatedJson = $subscriptionData | ConvertTo-Json -Depth 10
+        Set-Content -Path $filePath -Value $updatedJson -ErrorAction Stop
+        Write-Log "Updated subscription data in $filePath" -Level 'INFO'
+        return $true
+    }
+    catch {
+        Write-Log "Failed to update subscription data: $($_.Exception.Message)" -Level 'ERROR'
+        return $false
+    }
+}
+
 # Function to estimate costs for CrowdStrike resources in a subscription
 function Get-CrowdStrikeResourceCost {
     param (
@@ -405,8 +508,8 @@ else {
     Write-Log "Successfully authenticated with Az PowerShell module" -Level 'SUCCESS'
 }
 
-# Initialize results array
-$results = @()
+# Initialize counter for processed subscriptions
+$processedSubscriptionCount = 0
 
 # Get all subscriptions
 Show-Progress -Activity "Collecting data" -PercentComplete 5 -Status "Getting subscriptions"
@@ -675,9 +778,24 @@ foreach ($subscription in $subscriptions) {
     $subscriptionData.EstimatedDailyEventHubIngress = $activityLogSizeKB
     $subscriptionData.EstimatedDailyEventCount = $ingressEventsPerDay
     
-    # Store the subscription data in results array
-    $results += $subscriptionData
+    # Save subscription data to disk (instead of storing in memory)
+    Save-SubscriptionData -SubscriptionData $subscriptionData -SubscriptionDataDir $SubscriptionDataDir
+    $processedSubscriptionCount++
+    
+    # Free up memory by clearing large objects
+    $activityLogs = $null
 }
+
+# Write processed subscription count to summary file
+$summary = @{
+    ProcessedSubscriptions = $processedSubscriptionCount
+    DefaultSubscriptionId = $DefaultSubscriptionId
+    DefaultSubscriptionName = $defaultSubscription.Name
+    StartTime = $startTime
+    EndTime = Get-Date
+    DaysToAnalyze = $DaysToAnalyze
+}
+$summary | ConvertTo-Json -Depth 3 | Set-Content -Path $SummaryJsonPath
 
 # Get Entra ID log metrics (tenant-wide)
 Show-Progress -Activity "Collecting data" -PercentComplete 95 -Status "Retrieving Entra ID log metrics"
@@ -721,24 +839,45 @@ catch {
 }
 
 # Update default subscription with Entra ID log data
-$defaultSubResult = $results | Where-Object { $_.SubscriptionId -eq $DefaultSubscriptionId }
+$defaultSubFilePath = Join-Path $SubscriptionDataDir "$DefaultSubscriptionId.json"
 
-if ($defaultSubResult) {
-    $defaultSubResult.EstimatedDailyEventHubIngress += ($tenantMetrics.SignInDailyAverage + $tenantMetrics.AuditDailyAverage) * 2  # 2KB per Entra ID log estimate
-    $defaultSubResult.EstimatedDailyEventCount += ($tenantMetrics.SignInDailyAverage + $tenantMetrics.AuditDailyAverage)
-    
-    Write-Log "Updated default subscription with Entra ID log estimates" -Level 'INFO'
-    Write-Log "Total estimated daily Event Hub ingress: $($defaultSubResult.EstimatedDailyEventHubIngress) KB" -Level 'INFO'
-    Write-Log "Total estimated daily event count: $($defaultSubResult.EstimatedDailyEventCount)" -Level 'INFO'
+if (Test-Path $defaultSubFilePath) {
+    try {
+        $jsonContent = Get-Content -Path $defaultSubFilePath -Raw -ErrorAction Stop
+        $defaultSubData = $jsonContent | ConvertFrom-Json
+        
+        # Update with Entra ID log data
+        $updatedEventHubIngress = $defaultSubData.EstimatedDailyEventHubIngress + 
+                                  ($tenantMetrics.SignInDailyAverage + $tenantMetrics.AuditDailyAverage) * 2  # 2KB per Entra ID log estimate
+        
+        $updatedEventCount = $defaultSubData.EstimatedDailyEventCount + 
+                            ($tenantMetrics.SignInDailyAverage + $tenantMetrics.AuditDailyAverage)
+        
+        # Update the file with new values
+        Update-SubscriptionDataFile -SubscriptionId $DefaultSubscriptionId -SubscriptionDataDir $SubscriptionDataDir -Updates @{
+            EstimatedDailyEventHubIngress = $updatedEventHubIngress
+            EstimatedDailyEventCount = $updatedEventCount
+        }
+        
+        Write-Log "Updated default subscription with Entra ID log estimates" -Level 'INFO'
+        Write-Log "Total estimated daily Event Hub ingress: $updatedEventHubIngress KB" -Level 'INFO'
+        Write-Log "Total estimated daily event count: $updatedEventCount" -Level 'INFO'
+    }
+    catch {
+        Write-Log "Failed to update default subscription with Entra ID log data: $($_.Exception.Message)" -Level 'ERROR'
+    }
 }
 else {
-    Write-Log "Default subscription not found in results! This is unexpected." -Level 'ERROR'
+    Write-Log "Default subscription data file not found! This is unexpected." -Level 'ERROR'
 }
 
-# Calculate and update additional metrics for all subscriptions
+# Load all subscription data from disk for cost calculations
 Show-Progress -Activity "Calculating costs" -PercentComplete 97 -Status "Computing resource requirements and costs"
 
-foreach ($subscriptionResult in $results) {
+# Load all subscription data files from disk
+$allSubscriptionData = Get-AllSubscriptionData -SubscriptionDataDir $SubscriptionDataDir
+
+foreach ($subscriptionResult in $allSubscriptionData) {
     # Convert KB to MB per second for Event Hub throughput calculation
     $mbPerDay = $subscriptionResult.EstimatedDailyEventHubIngress / 1024
     $mbPerSecond = $mbPerDay / 86400  # seconds in a day
@@ -788,7 +927,7 @@ Show-Progress -Activity "Preparing output" -PercentComplete 98 -Status "Generati
 
 # Create a list to hold the resource types
 $resourceTypes = @()
-foreach ($sub in $results) {
+foreach ($sub in $allSubscriptionData) {
     foreach ($resourceType in $sub.CostDetails.Keys) {
         if ($resourceTypes -notcontains $resourceType) {
             $resourceTypes += $resourceType
@@ -798,7 +937,7 @@ foreach ($sub in $results) {
 
 # Create CSV data
 $csvData = @()
-foreach ($sub in $results) {
+foreach ($sub in $allSubscriptionData) {
     $row = [ordered]@{
         SubscriptionId = $sub.SubscriptionId
         SubscriptionName = $sub.SubscriptionName
@@ -840,8 +979,8 @@ catch {
 }
 
 # Generate summary
-$totalCost = ($results | Measure-Object -Property EstimatedMonthlyCost -Sum).Sum
-$defaultSubCost = ($results | Where-Object { $_.SubscriptionId -eq $DefaultSubscriptionId }).EstimatedMonthlyCost
+$totalCost = ($allSubscriptionData | Measure-Object -Property EstimatedMonthlyCost -Sum).Sum
+$defaultSubCost = ($allSubscriptionData | Where-Object { $_.SubscriptionId -eq $DefaultSubscriptionId }).EstimatedMonthlyCost
 $otherSubsCost = $totalCost - $defaultSubCost
 
 Write-Log "Cost Estimation Summary:" -Level 'INFO'
