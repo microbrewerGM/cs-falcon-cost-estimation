@@ -14,11 +14,14 @@ Number of days of logs to analyze. Default is 7.
 The subscription ID where CrowdStrike resources will be deployed. If not specified, the script
 will prompt for selection.
 
+.PARAMETER OutputDirectory
+Path to the directory where output files will be saved. Default is "cs-azure-cost-estimate-<timestamp>" in the current directory.
+
 .PARAMETER OutputFilePath
-Path to the CSV output file. Default is "cs-azure-cost-estimate-<timestamp>.csv" in the current directory.
+Path to the CSV output file. Default is "<OutputDirectory>/cs-azure-cost-estimate.csv".
 
 .PARAMETER LogFilePath
-Path to the log file. Default is "cs-azure-cost-estimate-<timestamp>.log" in the current directory.
+Path to the log file. Default is "<OutputDirectory>/cs-azure-cost-estimate.log".
 
 .EXAMPLE
 .\cs-azure-cost-estimation.ps1 -DaysToAnalyze 14
@@ -40,11 +43,46 @@ param(
     [string]$DefaultSubscriptionId,
 
     [Parameter(Mandatory = $false)]
-    [string]$OutputFilePath = "cs-azure-cost-estimate-$(Get-Date -Format 'yyyyMMdd-HHmmss').csv",
+    [string]$OutputDirectory = "",
 
     [Parameter(Mandatory = $false)]
-    [string]$LogFilePath = "cs-azure-cost-estimate-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+    [string]$OutputFilePath = "",
+
+    [Parameter(Mandatory = $false)]
+    [string]$LogFilePath = ""
 )
+
+# Create timestamped output directory if not specified
+$timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+    $OutputDirectory = "cs-azure-cost-estimate-$timestamp"
+}
+
+# Create the output directory if it doesn't exist
+if (-not (Test-Path $OutputDirectory)) {
+    New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null
+    Write-Host "Created output directory: $OutputDirectory" -ForegroundColor Green
+}
+
+# Create a subdirectory for subscription data files
+$SubscriptionDataDir = Join-Path $OutputDirectory "subscription-data"
+if (-not (Test-Path $SubscriptionDataDir)) {
+    New-Item -Path $SubscriptionDataDir -ItemType Directory -Force | Out-Null
+    Write-Host "Created subscription data directory: $SubscriptionDataDir" -ForegroundColor Green
+}
+
+# Set default file paths if not specified
+if ([string]::IsNullOrWhiteSpace($OutputFilePath)) {
+    $OutputFilePath = Join-Path $OutputDirectory "cs-azure-cost-estimate.csv"
+}
+
+if ([string]::IsNullOrWhiteSpace($LogFilePath)) {
+    $LogFilePath = Join-Path $OutputDirectory "cs-azure-cost-estimate.log"
+}
+
+# Path for the summary JSON file and status file
+$SummaryJsonPath = Join-Path $OutputDirectory "summary.json"
+$StatusFilePath = Join-Path $OutputDirectory "script-status.json"
 
 # Function to write to log file
 function Write-Log {
@@ -526,13 +564,107 @@ foreach ($subscription in $subscriptions) {
         
         try {
             # This might fail due to permissions, but we'll continue
-            $activityLogCount = Get-AzLog -StartTime $startTime -EndTime $endTime -ErrorAction Stop | Measure-Object | Select-Object -ExpandProperty Count
+            # Use Az REST API instead of the deprecated Get-AzActivityLog cmdlet
+            # Implement paging to handle more than 1000 results (the default page size)
+            
+            $activityLogs = @()
+            $pageCount = 0
+            $totalLogsRetrieved = 0
+            $filter = "eventTimestamp ge '${startTime}' and eventTimestamp le '${endTime}'"
+            $skipToken = $null
+            
+            Write-Log "Starting activity log retrieval for subscription $($subscription.Name)" -Level 'INFO'
+            Write-Log "Time range: $startTime to $endTime" -Level 'INFO'
+            
+            # First, try to get an estimate of total logs (API may not support count)
+            try {
+                $estimateUri = "/subscriptions/$subscriptionId/providers/Microsoft.Insights/eventtypes/management/values?api-version=2017-03-01-preview&`$filter=$filter&`$top=1"
+                $estimateResponse = Invoke-AzRestMethod -Method GET -Path $estimateUri -ErrorAction Stop
+                
+                if ($estimateResponse.StatusCode -eq 200) {
+                    $estimateContent = $estimateResponse.Content | ConvertFrom-Json
+                    if ($estimateContent.nextLink -and $estimateContent.nextLink -match "skipToken") {
+                        Write-Log "Activity log query will require multiple pages (default page size is ~1000 records)" -Level 'INFO'
+                    }
+                }
+            }
+            catch {
+                Write-Log "Could not determine total log count: $($_.Exception.Message)" -Level 'WARNING'
+            }
+            
+            do {
+                $pageCount++
+                
+                # Build the request URL with proper paging
+                $apiVersion = "2017-03-01-preview"
+                $requestURI = "/subscriptions/$subscriptionId/providers/Microsoft.Insights/eventtypes/management/values?api-version=$apiVersion&`$filter=$filter"
+                
+                # Add skipToken for pagination if it exists
+                if ($skipToken) {
+                    $requestURI += "&`$skipToken=$skipToken"
+                }
+                
+                try {
+                    Write-Log "Retrieving activity logs page $pageCount..." -Level 'INFO'
+                    
+                    # Make the REST API call
+                    $response = Invoke-AzRestMethod -Method GET -Path $requestURI -ErrorAction Stop
+                    
+                    # Check if the call was successful
+                    if ($response.StatusCode -eq 200) {
+                        $responseContent = $response.Content | ConvertFrom-Json
+                        
+                        if ($responseContent.value) {
+                            $logsPage = $responseContent.value
+                            $activityLogs += $logsPage
+                            $totalLogsRetrieved += $logsPage.Count
+                            
+                            # Log page details with operation types breakdown
+                            $operationTypes = $logsPage | Group-Object -Property OperationName | 
+                                              Select-Object Name, Count | Sort-Object -Property Count -Descending
+                            
+                            $topOperations = $operationTypes | Select-Object -First 3
+                            $topOperationsText = ($topOperations | ForEach-Object { "$($_.Name): $($_.Count)" }) -join ", "
+                            
+                            Write-Log "Page ${pageCount}: Retrieved $($logsPage.Count) activity logs (Total: $totalLogsRetrieved)" -Level 'INFO'
+                            Write-Log "  Top operations: ${topOperationsText}" -Level 'INFO'
+                            
+                            # Get the skipToken for the next page, if present
+                            $skipToken = $responseContent.nextLink
+                            if ($skipToken) {
+                                # Extract the skipToken from the nextLink URL
+                                if ($skipToken -match "\`$skipToken=([^&]+)") {
+                                    $skipToken = $Matches[1]
+                                }
+                                else {
+                                    $skipToken = $null
+                                }
+                            }
+                        }
+                        else {
+                            $logsPage = @()
+                        }
+                    }
+                    else {
+                        Write-Log "Failed to retrieve activity logs: StatusCode $($response.StatusCode)" -Level 'WARNING'
+                        break
+                    }
+                }
+                catch {
+                    Write-Log "Error calling Azure REST API: $($_.Exception.Message)" -Level 'WARNING'
+                    break
+                }
+                
+                # Continue until we don't have any more logs or a skipToken
+            } while ($logsPage.Count -gt 0 -and $skipToken)
+            
+            $activityLogCount = $activityLogs.Count
             $subscriptionData.ActivityLogCount = $activityLogCount
             
             # Calculate daily average
             $subscriptionData.DailyAverage = [math]::Round($activityLogCount / $DaysToAnalyze, 2)
             
-            Write-Log "Activity log count: $activityLogCount, Daily average: $($subscriptionData.DailyAverage)" -Level 'INFO'
+            Write-Log "Total activity log count: $activityLogCount, Daily average: $($subscriptionData.DailyAverage)" -Level 'INFO'
         }
         catch {
             Write-Log "Failed to get activity logs for subscription $($subscription.Name): $($_.Exception.Message)" -Level 'WARNING'
