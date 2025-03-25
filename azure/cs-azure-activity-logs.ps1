@@ -155,7 +155,7 @@ function Get-AllActivityLogsWithChunking {
                     $newChunkSize = [Math]::Max(1, [Math]::Floor($chunkSizeHours / 2))
                     
                     # If we're already at 1 hour and still hitting limits, log a warning
-                    if ($chunkSizeHours == 1 && $newChunkSize == 1) {
+                    if ($chunkSizeHours -eq 1 -and $newChunkSize -eq 1) {
                         Write-Host "${subCountPrefix}⚠️ Already at minimum chunk size (1 hour). Some logs may still be truncated." -ForegroundColor Yellow
                         if ($OutputDir) {
                             Write-LogEntry -Message "${subCountPrefix}WARNING: Already at minimum chunk size (1 hour). Log data may be incomplete due to high volume." -Level 'WARNING' -OutputDir $OutputDir
@@ -170,7 +170,7 @@ function Get-AllActivityLogsWithChunking {
                     }
                     
                     # Potentially increase chunk size if we're well below limit, but only if we haven't hit limits recently
-                    if ($logs.Count < 500 && $hitLimitCount == 0 && $chunkSizeHours < $InitialChunkSizeHours) {
+                    if ($logs.Count -lt 500 -and $hitLimitCount -eq 0 -and $chunkSizeHours -lt $InitialChunkSizeHours) {
                         $newChunkSize = [Math]::Min($InitialChunkSizeHours, $chunkSizeHours * 2)
                         if ($newChunkSize > $chunkSizeHours) {
                             Write-Host "${subCountPrefix}Chunk well below limit ($($logs.Count) logs). Increasing chunk size from $chunkSizeHours to $newChunkSize hours." -ForegroundColor Cyan
@@ -183,7 +183,7 @@ function Get-AllActivityLogsWithChunking {
                 Write-Host "${subCountPrefix}No logs found in this time chunk." -ForegroundColor DarkGray
                 
                 # If we've had several empty chunks, consider increasing chunk size
-                if ($noLogsCount >= 3 && $chunkSizeHours < $InitialChunkSizeHours) {
+                if ($noLogsCount -ge 3 -and $chunkSizeHours -lt $InitialChunkSizeHours) {
                     $newChunkSize = [Math]::Min($InitialChunkSizeHours, $chunkSizeHours * 2)
                     Write-Host "${subCountPrefix}Multiple empty chunks. Increasing chunk size from $chunkSizeHours to $newChunkSize hours." -ForegroundColor Cyan
                     $chunkSizeHours = $newChunkSize
