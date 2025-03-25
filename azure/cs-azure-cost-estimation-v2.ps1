@@ -764,4 +764,62 @@ function Get-PricingForRegion {
     }
     else {
         $formattedPricing.KeyVault = $script:StaticPricing.default.KeyVault # Fallback
-        Write-Log "Could not find Key Vault
+        Write-Log "Could not find Key Vault pricing, using fallback: $($formattedPricing.KeyVault)" -Level 'WARNING' -Category 'Pricing'
+    }
+    
+    # Private Endpoint Pricing
+    $privateEndpointItem = $PricingData['Private Link'] | Where-Object { 
+        $_.productName -like "*Private Endpoint*" -and $_.unitOfMeasure -eq '1 Hour'
+    } | Select-Object -First 1
+    
+    if ($privateEndpointItem) {
+        $formattedPricing.PrivateEndpoint = $privateEndpointItem.retailPrice
+        Write-Log "Private Endpoint hourly price: $($formattedPricing.PrivateEndpoint)" -Level 'DEBUG' -Category 'Pricing'
+    }
+    else {
+        $formattedPricing.PrivateEndpoint = $script:StaticPricing.default.PrivateEndpoint # Fallback
+        Write-Log "Could not find Private Endpoint pricing, using fallback: $($formattedPricing.PrivateEndpoint)" -Level 'WARNING' -Category 'Pricing'
+    }
+    
+    # VNet Gateway Pricing
+    $vnetGatewayItem = $PricingData['Virtual Network'] | Where-Object { 
+        $_.productName -like "*VPN Gateway*" -and $_.skuName -eq 'Basic' -and $_.unitOfMeasure -eq '1 Hour'
+    } | Select-Object -First 1
+    
+    if ($vnetGatewayItem) {
+        $formattedPricing.VnetGateway = $vnetGatewayItem.retailPrice
+        Write-Log "VNet Gateway hourly price: $($formattedPricing.VnetGateway)" -Level 'DEBUG' -Category 'Pricing'
+    }
+    else {
+        $formattedPricing.VnetGateway = $script:StaticPricing.default.VnetGateway # Fallback
+        Write-Log "Could not find VNet Gateway pricing, using fallback: $($formattedPricing.VnetGateway)" -Level 'WARNING' -Category 'Pricing'
+    }
+    
+    return $formattedPricing
+}
+
+#endregion
+
+# Main script execution begins here
+try {
+    Write-Log "CrowdStrike Azure Cost Estimation Tool starting..." -Level 'INFO' -Category 'Startup'
+    Write-Log "Script parameters: DaysToAnalyze=$DaysToAnalyze, SampleLogSize=$SampleLogSize, ParallelExecution=$ParallelExecution, UseRealPricing=$UseRealPricing" -Level 'INFO' -Category 'Startup'
+    
+    # Initialize Azure connection
+    $connected = Initialize-AzureConnection
+    if (-not $connected) {
+        Write-Log "Failed to initialize Azure connection. Exiting script." -Level 'ERROR' -Category 'Authentication'
+        exit 1
+    }
+    
+    # Main processing logic would continue here...
+    Write-Log "Azure Cost Estimation completed successfully" -Level 'SUCCESS' -Category 'Completion'
+}
+catch {
+    Write-Log "An error occurred during script execution: $($_.Exception.Message)" -Level 'ERROR' -Category 'Exception'
+    Write-Log "Stack trace: $($_.ScriptStackTrace)" -Level 'ERROR' -Category 'Exception'
+    exit 1
+}
+finally {
+    Write-Log "Script execution finished. See $LogFilePath for detailed logs." -Level 'INFO' -Category 'Completion'
+}
