@@ -77,9 +77,9 @@ function Get-AllActivityLogsWithChunking {
         $subCountPrefix = "[$CurrentSubscriptionNumber/$TotalSubscriptions] "
     }
     
-    # Calculate total number of chunks based on initial chunk size
-    $totalHours = [Math]::Ceiling(($EndTime - $StartTime).TotalHours)
-    $initialChunkCount = [Math]::Ceiling($totalHours / $InitialChunkSizeHours)
+        # Calculate total number of chunks based on initial chunk size
+        $totalHours = [Math]::Ceiling(($EndTime - $StartTime).TotalHours)
+        $initialChunkCount = [Math]::Ceiling($totalHours / $InitialChunkSizeHours)
     
     Write-Host "${subCountPrefix}Breaking request into $initialChunkCount time chunks (initial estimate)..." -ForegroundColor Cyan
     if ($OutputDir) {
@@ -119,14 +119,15 @@ function Get-AllActivityLogsWithChunking {
             $currentEnd = $EndTime
         }
         
-        # Update progress bar
-        $progressPercent = [Math]::Min(100, [Math]::Ceiling(($currentStart - $StartTime).TotalHours / $totalHours * 100))
-        Write-Progress @progressParams -Status "${subCountPrefix}Processing chunk $chunkNumber: $currentStart to $currentEnd" -PercentComplete $progressPercent
+        # Update progress bar - ensure variables use ${} for clarity in string interpolation
+        # Use commas to separate Math method arguments properly to avoid parsing errors
+        $progressPercent = [Math]::Min(100, [Math]::Ceiling((($currentStart - $StartTime).TotalHours / $totalHours) * 100))
+        Write-Progress @progressParams -Status "${subCountPrefix}Processing chunk ${chunkNumber}: ${currentStart} to ${currentEnd}" -PercentComplete $progressPercent
         
-        # Make the chunked request
-        Write-Host "${subCountPrefix}Processing time chunk $chunkNumber: $($currentStart.ToString('yyyy-MM-dd HH:mm')) to $($currentEnd.ToString('yyyy-MM-dd HH:mm')) ($chunkSizeHours hour(s))" -ForegroundColor Cyan
+        # Make the chunked request - use ${} for variable names in strings for clarity
+        Write-Host "${subCountPrefix}Processing time chunk ${chunkNumber}: $($currentStart.ToString('yyyy-MM-dd HH:mm')) to $($currentEnd.ToString('yyyy-MM-dd HH:mm')) (${chunkSizeHours} hour(s))" -ForegroundColor Cyan
         if ($OutputDir) {
-            Write-LogEntry -Message "${subCountPrefix}Processing time chunk $chunkNumber: $($currentStart.ToString('yyyy-MM-dd HH:mm')) to $($currentEnd.ToString('yyyy-MM-dd HH:mm')) ($chunkSizeHours hour(s))" -OutputDir $OutputDir
+            Write-LogEntry -Message "${subCountPrefix}Processing time chunk ${chunkNumber}: $($currentStart.ToString('yyyy-MM-dd HH:mm')) to $($currentEnd.ToString('yyyy-MM-dd HH:mm')) (${chunkSizeHours} hour(s))" -OutputDir $OutputDir
         }
         
         try {
@@ -139,7 +140,7 @@ function Get-AllActivityLogsWithChunking {
                 $allLogs += $logs
                 Write-Host "${subCountPrefix}Retrieved $($logs.Count) logs from this chunk. Total logs so far: $($allLogs.Count)" -ForegroundColor Green
                 if ($OutputDir) {
-                    Write-LogEntry -Message "${subCountPrefix}Retrieved $($logs.Count) logs from chunk $chunkNumber. Total so far: $($allLogs.Count)" -OutputDir $OutputDir
+                    Write-LogEntry -Message "${subCountPrefix}Retrieved $($logs.Count) logs from chunk ${chunkNumber}. Total so far: $($allLogs.Count)" -OutputDir $OutputDir
                 }
                 
                 # Adjust chunk size if we hit the 1000 record limit
@@ -147,7 +148,7 @@ function Get-AllActivityLogsWithChunking {
                     $hitLimitCount++
                     Write-Host "${subCountPrefix}⚠️ Reached 1000-record limit in this chunk. Reducing chunk size." -ForegroundColor Yellow
                     if ($OutputDir) {
-                        Write-LogEntry -Message "${subCountPrefix}WARNING: Hit 1000-record limit in chunk $chunkNumber. Reducing time window size." -Level 'WARNING' -OutputDir $OutputDir
+                        Write-LogEntry -Message "${subCountPrefix}WARNING: Hit 1000-record limit in chunk ${chunkNumber}. Reducing time window size." -Level 'WARNING' -OutputDir $OutputDir
                     }
                     
                     # Reduce chunk size for next iteration, but never below 1 hour
@@ -191,9 +192,9 @@ function Get-AllActivityLogsWithChunking {
             }
         }
         catch {
-            Write-Warning "${subCountPrefix}Error retrieving activity logs for chunk $chunkNumber: $($_.Exception.Message)"
+            Write-Warning "${subCountPrefix}Error retrieving activity logs for chunk ${chunkNumber}: $($_.Exception.Message)"
             if ($OutputDir) {
-                Write-LogEntry -Message "${subCountPrefix}ERROR: Failed to retrieve logs for chunk $chunkNumber: $($_.Exception.Message)" -Level 'ERROR' -OutputDir $OutputDir
+                Write-LogEntry -Message "${subCountPrefix}ERROR: Failed to retrieve logs for chunk ${chunkNumber}: $($_.Exception.Message)" -Level 'ERROR' -OutputDir $OutputDir
             }
         }
         
