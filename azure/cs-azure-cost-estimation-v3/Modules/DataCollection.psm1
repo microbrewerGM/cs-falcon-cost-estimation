@@ -78,13 +78,33 @@ function Get-AllCostEstimationData {
     
     Write-Log "Starting data collection" -Level 'INFO' -Category 'DataCollection'
     
-    # Create placeholder data
+    # Create placeholder subscription for testing
+    $testSub = New-Object -TypeName PSObject -Property @{
+        Id = "00000000-0000-0000-0000-000000000000"
+        Name = "Test Subscription"
+    }
+    
+    # Create data structure as a hashtable (not an array)
     $allData = @{
         CollectionStartTime = Get-Date
         EntraIdMetrics = Get-EntraIdLogMetrics -DaysToAnalyze $DaysToAnalyze
-        SubscriptionMetadata = @{}
-        ActivityLogs = @{}
-        Subscriptions = @()
+        SubscriptionMetadata = @{
+            "00000000-0000-0000-0000-000000000000" = @{
+                SubscriptionId = "00000000-0000-0000-0000-000000000000"
+                SubscriptionName = "Test Subscription"
+                Region = "eastus"
+                PrimaryLocation = "eastus"
+                BusinessUnit = "Engineering"
+                Environment = "Production"
+                IsProductionLike = $true
+                IsDevelopmentLike = $false
+                Tags = @{}
+            }
+        }
+        ActivityLogs = @{
+            "00000000-0000-0000-0000-000000000000" = Get-SubscriptionActivityLogs -SubscriptionId "00000000-0000-0000-0000-000000000000"
+        }
+        Subscriptions = @($testSub)
     }
     
     Write-Log "Data collection complete" -Level 'SUCCESS' -Category 'DataCollection'
