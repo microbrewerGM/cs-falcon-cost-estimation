@@ -255,7 +255,7 @@ function Process-Subscription {
     
     Show-EnhancedProgress -Activity "Processing Subscriptions" -Status "Subscription $ProcessedCount of $TotalCount - $subscriptionName" -PercentComplete $percentComplete -StartTime $StartTime
     
-    Write-Log "Processing subscription $ProcessedCount of $TotalCount: $subscriptionName ($subscriptionId)" -Level 'INFO' -Category 'Subscription'
+    Write-Log "Processing subscription $ProcessedCount of ${TotalCount}: $subscriptionName ($subscriptionId)" -Level 'INFO' -Category 'Subscription'
     
     # Get subscription metadata
     $subscriptionMetadata = Get-SubscriptionMetadata -SubscriptionId $subscriptionId
@@ -440,7 +440,8 @@ if ($IncludeManagementGroups) {
         Write-Log "Management group cost analysis complete. Found $($managementGroupSummary.Keys.Count) groups" -Level 'SUCCESS' -Category 'ManagementGroups'
     }
     catch {
-        Write-Log "Error collecting management group information: ${_}" -Level 'WARNING' -Category 'ManagementGroups'
+        $errorMessage = $_.Exception.Message
+        Write-Log "Error collecting management group information: $errorMessage" -Level 'WARNING' -Category 'ManagementGroups'
         Write-Log "Management group reporting disabled. Continuing with other analyses." -Level 'WARNING' -Category 'ManagementGroups'
     }
 }
