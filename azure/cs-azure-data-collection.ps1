@@ -47,7 +47,8 @@ function Get-ActivityLogMetrics {
     
     try {
         # Select the subscription
-        $currentContext = Set-AzContext -SubscriptionId $SubscriptionId -ErrorAction Stop
+        # Using -Subscription parameter which accepts subscription IDs (SubscriptionId is an alias)
+        $currentContext = Set-AzContext -Subscription $SubscriptionId -ErrorAction Stop
         
         # Calculate time range for log collection
         $endTime = Get-Date
