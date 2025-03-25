@@ -41,6 +41,9 @@ The tag name used for business unit attribution. Default is "BusinessUnit".
 .PARAMETER IncludeManagementGroups
 Include management group structure for organizational reporting. Default is $true.
 
+.PARAMETER IncludeCharts
+Include visual charts in the HTML report. Default is $true.
+
 .EXAMPLE
 .\cs-azure-cost-estimation-modular.ps1 -DaysToAnalyze 14 -SampleLogSize 200
 
@@ -86,7 +89,10 @@ param(
     [string]$BusinessUnitTagName = "BusinessUnit",
 
     [Parameter(Mandatory = $false)]
-    [bool]$IncludeManagementGroups = $true
+    [bool]$IncludeManagementGroups = $true,
+
+    [Parameter(Mandatory = $false)]
+    [bool]$IncludeCharts = $true
 )
 
 # Set up module path - modules are in the CS-Azure-Cost-Estimation-v2/Modules directory
@@ -157,6 +163,7 @@ Write-Log "  - Parallel execution: $ParallelExecution" -Level 'INFO' -Category '
 Write-Log "  - Max parallel jobs: $MaxParallelJobs" -Level 'INFO' -Category 'Initialization'
 Write-Log "  - Business unit tag name: $BusinessUnitTagName" -Level 'INFO' -Category 'Initialization'
 Write-Log "  - Include management groups: $IncludeManagementGroups" -Level 'INFO' -Category 'Initialization'
+Write-Log "  - Include charts in HTML report: $IncludeCharts" -Level 'INFO' -Category 'Initialization'
 
 # Authentication
 # ==============
@@ -228,22 +235,33 @@ $totalSubs = $subscriptions.Count
 $processedSubs = 0
 $startTime = Get-Date
 
-foreach ($subscription in $subscriptions) {
-    $subscriptionId = $subscription.Id
-    $subscriptionName = $subscription.Name
+# Function to process a single subscription
+function Process-Subscription {
+    param (
+        [Parameter(Mandatory = $true)]
+        [object]$Subscription,
+        [Parameter(Mandatory = $true)]
+        [int]$ProcessedCount,
+        [Parameter(Mandatory = $true)]
+        [int]$TotalCount,
+        [Parameter(Mandatory = $true)]
+        [datetime]$StartTime
+    )
     
-    $processedSubs++
-    $percentComplete = [math]::Round(($processedSubs / $totalSubs) * 100)
+    $subscriptionId = $Subscription.Id
+    $subscriptionName = $Subscription.Name
     
-    Show-EnhancedProgress -Activity "Processing Subscriptions" -Status "Subscription $processedSubs of $totalSubs - $subscriptionName" -PercentComplete $percentComplete -StartTime $startTime
+    $percentComplete = [math]::Round(($ProcessedCount / $TotalCount) * 100)
     
-    Write-Log "Processing subscription $processedSubs of $totalSubs: $subscriptionName ($subscriptionId)" -Level 'INFO' -Category 'Subscription'
+    Show-EnhancedProgress -Activity "Processing Subscriptions" -Status "Subscription $ProcessedCount of $TotalCount - $subscriptionName" -PercentComplete $percentComplete -StartTime $StartTime
+    
+    Write-Log "Processing subscription $ProcessedCount of $TotalCount: $subscriptionName ($subscriptionId)" -Level 'INFO' -Category 'Subscription'
     
     # Get subscription metadata
     $subscriptionMetadata = Get-SubscriptionMetadata -SubscriptionId $subscriptionId
     
     # Get subscription activity logs
-    $activityLogData = Get-SubscriptionActivityLogs -SubscriptionId $subscriptionId -DaysToAnalyze $DaysToAnalyze -SampleSize $SampleLogSize
+    $activityLogData = Get-SubscriptionActivityLogs -SubscriptionId $subscriptionId -DaysToAnalyze $script:DaysToAnalyze -SampleSize $script:SampleLogSize
     
     # Get subscription resources
     $resourceData = Get-SubscriptionResources -SubscriptionId $subscriptionId
@@ -251,17 +269,17 @@ foreach ($subscription in $subscriptions) {
     # Get pricing for the subscription's region
     $region = $subscriptionMetadata.PrimaryLocation
     if ($region -eq "unknown") {
-        $region = $DefaultRegion
+        $region = Get-ConfigSetting -Name 'DefaultRegion' -DefaultValue 'eastus'
     }
     
-    $regionPricing = Get-PricingForRegion -Region $region -PricingData $pricingInfo -UseRetailRates $UseRealPricing
+    $regionPricing = Get-PricingForRegion -Region $region -PricingData $script:pricingInfo -UseRetailRates $script:UseRealPricing
     
     # Determine if this is a production environment
     $isProduction = $subscriptionMetadata.IsProductionLike
     
     # Get business unit
-    $businessUnit = $DefaultBusinessUnit
-    if ($subscriptionMetadata.BusinessUnit -ne $DefaultBusinessUnit) {
+    $businessUnit = Get-ConfigSetting -Name 'DefaultBusinessUnit' -DefaultValue 'Unassigned'
+    if ($subscriptionMetadata.BusinessUnit -ne $businessUnit) {
         $businessUnit = $subscriptionMetadata.BusinessUnit
     }
     
@@ -269,7 +287,8 @@ foreach ($subscription in $subscriptions) {
     $subscriptionEstimate = Get-SubscriptionCostEstimate -SubscriptionId $subscriptionId `
                                                        -SubscriptionMetadata $subscriptionMetadata `
                                                        -ActivityLogData $activityLogData `
-                                                       -EntraIdData $entraIdMetrics `
+                                                       -ResourceData $resourceData `
+                                                       -EntraIdData $script:entraIdMetrics `
                                                        -Pricing $regionPricing `
                                                        -IsProductionEnvironment $isProduction `
                                                        -BusinessUnit $businessUnit
@@ -277,16 +296,154 @@ foreach ($subscription in $subscriptions) {
     # Add subscription name to the estimate for easier identification
     $subscriptionEstimate["SubscriptionName"] = $subscriptionName
     
-    # Add to the array of estimates
-    $subscriptionEstimates += $subscriptionEstimate
-    
     Write-Log "Completed cost estimate for $subscriptionName. Monthly cost: $($subscriptionEstimate.MonthlyCost)" -Level 'SUCCESS' -Category 'Estimation'
+    
+    # Return the estimate
+    return $subscriptionEstimate
+}
+
+# Process subscriptions either sequentially or in parallel
+if ($ParallelExecution -and $subscriptionCount -gt 1) {
+    Write-Log "Using parallel execution with maximum of $MaxParallelJobs concurrent jobs" -Level 'INFO' -Category 'Execution'
+    
+    # Create a session state for script-level variables
+    $sessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+    
+    # Create job objects
+    $jobs = @()
+    $jobScriptBlock = {
+        param($subscription, $processedCount, $totalCount, $startTime)
+        Process-Subscription -Subscription $subscription -ProcessedCount $processedCount -TotalCount $totalCount -StartTime $startTime
+    }
+    
+    # Submit jobs in batches according to MaxParallelJobs
+    for ($i = 0; $i -lt $subscriptionCount; $i++) {
+        $subscription = $subscriptions[$i]
+        $processedCount = $i + 1
+        
+        # Create a background job for this subscription
+        $job = Start-Job -ScriptBlock $jobScriptBlock -ArgumentList $subscription, $processedCount, $totalSubs, $startTime
+        $jobs += $job
+        
+        # Update status file
+        $status = @{
+            "Total" = $totalSubs
+            "Processed" = $processedCount
+            "Percentage" = [math]::Round(($processedCount / $totalSubs) * 100)
+            "CurrentlyProcessing" = $subscription.Name
+        }
+        $status | ConvertTo-Json | Out-File -FilePath $StatusFilePath -Force
+        
+        # If we've reached the maximum number of parallel jobs, wait for one to complete
+        if ($jobs.Count -ge $MaxParallelJobs) {
+            $completedJob = $jobs | Wait-Job -Any
+            $estimate = Receive-Job $completedJob
+            $subscriptionEstimates += $estimate
+            Remove-Job $completedJob
+            $jobs = $jobs | Where-Object { $_.Id -ne $completedJob.Id }
+        }
+    }
+    
+    # Wait for any remaining jobs to complete
+    while ($jobs.Count -gt 0) {
+        $completedJob = $jobs | Wait-Job -Any
+        $estimate = Receive-Job $completedJob
+        $subscriptionEstimates += $estimate
+        Remove-Job $completedJob
+        $jobs = $jobs | Where-Object { $_.Id -ne $completedJob.Id }
+    }
+    
+    Write-Log "All parallel subscription processing jobs completed" -Level 'SUCCESS' -Category 'Execution'
+} else {
+    # Process subscriptions sequentially
+    Write-Log "Using sequential processing for subscriptions" -Level 'INFO' -Category 'Execution'
+    
+    for ($i = 0; $i -lt $subscriptionCount; $i++) {
+        $subscription = $subscriptions[$i]
+        $processedCount = $i + 1
+        
+        # Update status file
+        $status = @{
+            "Total" = $totalSubs
+            "Processed" = $processedCount
+            "Percentage" = [math]::Round(($processedCount / $totalSubs) * 100)
+            "CurrentlyProcessing" = $subscription.Name
+        }
+        $status | ConvertTo-Json | Out-File -FilePath $StatusFilePath -Force
+        
+        # Process the subscription
+        $estimate = Process-Subscription -Subscription $subscription -ProcessedCount $processedCount -TotalCount $totalSubs -StartTime $startTime
+        $subscriptionEstimates += $estimate
+    }
 }
 
 # Business Unit Analysis
 # =====================
 Write-Log "Performing business unit cost analysis..." -Level 'INFO' -Category 'BusinessUnits'
 $businessUnitSummary = Get-BusinessUnitCostSummary -SubscriptionEstimates $subscriptionEstimates
+
+# Management Group Analysis (if enabled)
+# =====================================
+$managementGroupSummary = @{}
+if ($IncludeManagementGroups) {
+    Write-Log "Collecting management group structure..." -Level 'INFO' -Category 'ManagementGroups'
+    
+    # Get management group hierarchy
+    try {
+        $managementGroups = Get-AzManagementGroup -Expand -Recurse
+        Write-Log "Found $(($managementGroups | Measure-Object).Count) management groups" -Level 'INFO' -Category 'ManagementGroups'
+        
+        # Create a lookup table of subscription to management group
+        $subscriptionToMgLookup = @{}
+        foreach ($mg in $managementGroups) {
+            if ($mg.Children) {
+                foreach ($child in $mg.Children) {
+                    if ($child.Type -eq 'Microsoft.Management/managementGroups') {
+                        # This is a nested management group, skip
+                        continue
+                    }
+                    elseif ($child.Type -eq 'Microsoft.Management/subscriptions') {
+                        # This is a subscription
+                        $subscriptionId = $child.Name
+                        $subscriptionToMgLookup[$subscriptionId] = $mg.Name
+                    }
+                }
+            }
+        }
+        
+        # Aggregate costs by management group
+        foreach ($estimate in $subscriptionEstimates) {
+            $subId = $estimate.SubscriptionId
+            $mgName = $subscriptionToMgLookup[$subId]
+            
+            # If we don't have a management group for this subscription, use "Unassigned"
+            if (-not $mgName) {
+                $mgName = "Unassigned"
+            }
+            
+            # Add to management group summary
+            if (-not $managementGroupSummary.ContainsKey($mgName)) {
+                $managementGroupSummary[$mgName] = @{
+                    "MonthlyCost" = 0
+                    "SubscriptionCount" = 0
+                    "Subscriptions" = @()
+                }
+            }
+            
+            $managementGroupSummary[$mgName].MonthlyCost += $estimate.MonthlyCost
+            $managementGroupSummary[$mgName].SubscriptionCount++
+            $managementGroupSummary[$mgName].Subscriptions += $estimate.SubscriptionName
+        }
+        
+        # Export management group costs to CSV
+        $mgExportSuccess = Export-ManagementGroupCostsToCsv -ManagementGroupSummary $managementGroupSummary -OutputFilePath $MgReportPath
+        Write-Log "Management group cost analysis complete. Found $($managementGroupSummary.Keys.Count) groups" -Level 'SUCCESS' -Category 'ManagementGroups'
+    }
+    catch {
+        Write-Log "Error collecting management group information: $_" -Level 'WARNING' -Category 'ManagementGroups'
+        Write-Log "Management group reporting disabled. Continuing with other analyses." -Level 'WARNING' -Category 'ManagementGroups'
+    }
+}
 
 # Reporting
 # =========
@@ -301,12 +458,14 @@ $buExportSuccess = Export-BusinessUnitCostsToCsv -BusinessUnitSummary $businessU
 # Export all data to a summary JSON file
 $jsonExportSuccess = Export-SummaryToJson -SubscriptionEstimates $subscriptionEstimates `
                                          -BusinessUnitSummary $businessUnitSummary `
+                                         -ManagementGroupSummary $managementGroupSummary `
                                          -EntraIdData $entraIdMetrics `
                                          -OutputFilePath $SummaryJsonPath
 
 # Generate HTML report
 $htmlReportSuccess = New-HtmlReport -SubscriptionEstimates $subscriptionEstimates `
                                    -BusinessUnitSummary $businessUnitSummary `
+                                   -ManagementGroupSummary $managementGroupSummary `
                                    -OutputFilePath $HtmlReportPath `
                                    -ReportTitle "CrowdStrike Azure Cost Estimation Report" `
                                    -IncludeCharts $IncludeCharts
@@ -321,10 +480,16 @@ Write-Log "  - Total subscriptions analyzed: $($subscriptionEstimates.Count)" -L
 Write-Log "  - Total monthly cost estimate: $($totalEstimate)" -Level 'SUCCESS' -Category 'Summary'
 Write-Log "  - Total annual cost estimate: $($totalAnnualEstimate)" -Level 'SUCCESS' -Category 'Summary'
 Write-Log "  - Business units identified: $($businessUnitSummary.Keys.Count)" -Level 'SUCCESS' -Category 'Summary'
+if ($IncludeManagementGroups -and $managementGroupSummary.Count -gt 0) {
+    Write-Log "  - Management groups analyzed: $($managementGroupSummary.Keys.Count)" -Level 'SUCCESS' -Category 'Summary'
+}
 
 Write-Log "Reports generated:" -Level 'SUCCESS' -Category 'Summary'
 Write-Log "  - Subscription cost details: $OutputFilePath" -Level 'SUCCESS' -Category 'Summary'
 Write-Log "  - Business unit summary: $BuReportPath" -Level 'SUCCESS' -Category 'Summary'
+if ($IncludeManagementGroups -and $mgExportSuccess) {
+    Write-Log "  - Management group summary: $MgReportPath" -Level 'SUCCESS' -Category 'Summary'
+}
 Write-Log "  - Full data summary (JSON): $SummaryJsonPath" -Level 'SUCCESS' -Category 'Summary'
 Write-Log "  - HTML report with visualizations: $HtmlReportPath" -Level 'SUCCESS' -Category 'Summary'
 
