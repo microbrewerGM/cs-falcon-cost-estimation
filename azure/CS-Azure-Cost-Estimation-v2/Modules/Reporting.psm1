@@ -1,8 +1,7 @@
 # Reporting Module for CrowdStrike Azure Cost Estimation Tool
 
-# Import required modules
-Import-Module "$PSScriptRoot\Logging.psm1" -Force
-Import-Module "$PSScriptRoot\Config.psm1" -Force
+# Note: Do not import modules here - they should be imported by the main script
+# This avoids issues with duplicate module loading and function scope
 
 # Function to export subscription cost estimates to CSV
 function Export-CostEstimatesToCsv {

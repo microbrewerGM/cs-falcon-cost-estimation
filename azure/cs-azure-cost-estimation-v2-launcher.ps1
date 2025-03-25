@@ -39,6 +39,9 @@ The tag name used for business unit attribution.
 .PARAMETER IncludeManagementGroups
 Include management group structure for organizational reporting.
 
+.PARAMETER DevelopmentMode
+Run in development mode, which will mock Azure dependencies. Default is false.
+
 .EXAMPLE
 .\cs-azure-cost-estimation-v2-launcher.ps1 -DaysToAnalyze 14 -SampleLogSize 200
 
@@ -79,8 +82,132 @@ param(
     [string]$BusinessUnitTagName,
 
     [Parameter(Mandatory = $false)]
-    [bool]$IncludeManagementGroups
+    [bool]$IncludeManagementGroups,
+    
+    [Parameter(Mandatory = $false)]
+    [switch]$DevelopmentMode
 )
+
+# Path to key directories
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$mainDir = Join-Path $scriptDir "CS-Azure-Cost-Estimation-v2"
+$modulesDir = Join-Path $mainDir "Modules"
+$mainScriptPath = Join-Path $mainDir "CS-Azure-Cost-Estimation-v2-Main.ps1"
+
+Write-Host "Launching CrowdStrike Azure Cost Estimation Tool (v2)" -ForegroundColor Cyan
+Write-Host "Main script: $mainScriptPath" -ForegroundColor Cyan
+Write-Host ""
+
+# Check for required PowerShell modules before proceeding
+Write-Host "Checking prerequisites..." -ForegroundColor Cyan
+
+# First, check if script is running in PowerShell Core (pwsh) rather than Windows PowerShell
+if ($PSVersionTable.PSEdition -ne "Core") {
+    Write-Host "This script requires PowerShell Core (pwsh) to run properly." -ForegroundColor Red
+    Write-Host "Please install PowerShell Core and run this script using 'pwsh' instead of 'powershell'." -ForegroundColor Red
+    exit 1
+}
+
+# Check if Azure PowerShell modules are installed
+if (-not $DevelopmentMode) {
+    $azureModules = @(
+        "Az.Accounts",
+        "Az.Resources",
+        "Az.Monitor"
+    )
+    
+    $missingAzModules = @()
+    foreach ($module in $azureModules) {
+        if (-not (Get-Module -ListAvailable -Name $module)) {
+            $missingAzModules += $module
+        }
+    }
+    
+    if ($missingAzModules.Count -gt 0) {
+        Write-Host "Error: Required Azure PowerShell modules are missing:" -ForegroundColor Red
+        foreach ($module in $missingAzModules) {
+            Write-Host "  - $module" -ForegroundColor Red
+        }
+        
+        Write-Host "`nThese modules are required for script operation. Would you like to:" -ForegroundColor Yellow
+        Write-Host "  1. Install the missing modules now (requires admin permissions)"
+        Write-Host "  2. Run in development mode with simulated Azure dependencies"
+        Write-Host "  3. Exit"
+        
+        $choice = Read-Host "Enter your choice (1-3)"
+        
+        switch ($choice) {
+            "1" {
+                Write-Host "Installing missing Azure PowerShell modules..." -ForegroundColor Cyan
+                foreach ($module in $missingAzModules) {
+                    try {
+                        Write-Host "Installing $module..." -ForegroundColor Cyan
+                        Install-Module -Name $module -Scope CurrentUser -Force -AllowClobber
+                        Write-Host "$module installed successfully" -ForegroundColor Green
+                    }
+                    catch {
+                        Write-Host "Failed to install $module. Error: $($_.Exception.Message)" -ForegroundColor Red
+                        Write-Host "You can try installing it manually using: Install-Module -Name $module -Scope CurrentUser -Force -AllowClobber" -ForegroundColor Yellow
+                        exit 1
+                    }
+                }
+            }
+            "2" {
+                Write-Host "Enabling development mode with simulated Azure dependencies" -ForegroundColor Yellow
+                $DevelopmentMode = $true
+                $paramSplat["DevelopmentMode"] = $true
+            }
+            "3" {
+                Write-Host "Exiting script" -ForegroundColor Red
+                exit 0
+            }
+            default {
+                Write-Host "Invalid choice. Exiting script" -ForegroundColor Red
+                exit 1
+            }
+        }
+    }
+    else {
+        Write-Host "Required Azure PowerShell modules are installed" -ForegroundColor Green
+    }
+}
+else {
+    Write-Host "Running in DEVELOPMENT MODE - Azure dependencies will be simulated" -ForegroundColor Yellow
+}
+
+# Check all required module files exist 
+$requiredModules = @(
+    "ConfigLoader",
+    "Logging",
+    "Authentication",
+    "Pricing",
+    "DataCollection",
+    "CostEstimation",
+    "Reporting"
+)
+
+$missingModules = @()
+foreach ($module in $requiredModules) {
+    $modulePath = Join-Path $modulesDir "$module.psm1"
+    if (-not (Test-Path $modulePath)) {
+        $missingModules += $module
+    }
+}
+
+if ($missingModules.Count -gt 0) {
+    Write-Host "Error: The following required modules are missing:" -ForegroundColor Red
+    foreach ($module in $missingModules) {
+        Write-Host "  - $module" -ForegroundColor Red
+    }
+    Write-Host "Please make sure all required module files are present in: $modulesDir" -ForegroundColor Red
+    exit 1
+}
+
+# Check if main script exists
+if (-not (Test-Path $mainScriptPath)) {
+    Write-Host "Error: Main script not found at: $mainScriptPath" -ForegroundColor Red
+    exit 1
+}
 
 # Build the parameter splat from the received parameters
 $paramSplat = @{}
@@ -88,12 +215,10 @@ foreach ($param in $PSBoundParameters.Keys) {
     $paramSplat[$param] = $PSBoundParameters[$param]
 }
 
-# Path to the main script in the CS-Azure-Cost-Estimation-v2 directory
-$scriptPath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "CS-Azure-Cost-Estimation-v2/CS-Azure-Cost-Estimation-v2-Main.ps1"
+Write-Host "All prerequisites met. Launching main script..." -ForegroundColor Green
 
-Write-Host "Launching CrowdStrike Azure Cost Estimation Tool (v2)" -ForegroundColor Cyan
-Write-Host "Main script: $scriptPath" -ForegroundColor Cyan
-Write-Host ""
+# Set module export path explicitly to ensure modules can be found
+$env:PSModulePath = $modulesDir + [IO.Path]::PathSeparator + $env:PSModulePath
 
 # Call the main script with all parameters
-& $scriptPath @paramSplat
+& $mainScriptPath @paramSplat

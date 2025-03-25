@@ -99,27 +99,85 @@ param(
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
 $modulesPath = Join-Path $scriptPath "Modules"
 
-# Import required modules
-$requiredModules = @(
-    "ConfigLoader",
-    "Logging",
-    "Authentication",
-    "Pricing",
-    "DataCollection",
-    "CostEstimation",
-    "Reporting"
+Write-Host "Loading modules..." -ForegroundColor Cyan
+
+# Define module paths
+$configLoaderPath = Join-Path $modulesPath "ConfigLoader.psm1"
+$loggingPath = Join-Path $modulesPath "Logging.psm1"
+$authenticationPath = Join-Path $modulesPath "Authentication.psm1"
+$pricingPath = Join-Path $modulesPath "Pricing.psm1"
+$dataCollectionPath = Join-Path $modulesPath "DataCollection.psm1"
+$costEstimationPath = Join-Path $modulesPath "CostEstimation.psm1"
+$reportingPath = Join-Path $modulesPath "Reporting.psm1"
+
+# Check that all module files exist
+$modulePaths = @(
+    $configLoaderPath,
+    $loggingPath,
+    $authenticationPath,
+    $pricingPath,
+    $dataCollectionPath,
+    $costEstimationPath,
+    $reportingPath
 )
 
-foreach ($module in $requiredModules) {
-    $modulePath = Join-Path $modulesPath "$module.psm1"
-    if (Test-Path $modulePath) {
-        Import-Module $modulePath -Force
-        # Write-Host "Imported module: $module" -ForegroundColor Green
-    }
-    else {
-        Write-Error "Required module not found: $modulePath"
+foreach ($path in $modulePaths) {
+    if (-not (Test-Path $path)) {
+        Write-Error "Required module file not found: $path"
         exit 1
     }
+}
+
+# ABSOLUTE SIMPLEST APPROACH - Import the modules using traditional Import-Module
+Write-Host "Loading modules using traditional Import-Module..." -ForegroundColor Cyan
+
+try {
+    # Remove any existing modules first to prevent conflicts
+    foreach ($module in @("ConfigLoader", "Logging", "Authentication", "Pricing", "DataCollection", "CostEstimation", "Reporting")) {
+        if (Get-Module -Name $module -ErrorAction SilentlyContinue) {
+            Remove-Module -Name $module -Force
+        }
+    }
+    
+    # Add modules path to PSModulePath temporarily
+    $originalPSModulePath = $env:PSModulePath
+    $env:PSModulePath = $modulesPath + [IO.Path]::PathSeparator + $env:PSModulePath
+    
+    # Import modules directly using Import-Module with paths
+    Write-Host "Importing ConfigLoader module..." -ForegroundColor Cyan
+    Import-Module $configLoaderPath -Force -Global
+    Write-Host "Imported ConfigLoader module" -ForegroundColor Green
+    
+    Write-Host "Importing Logging module..." -ForegroundColor Cyan
+    Import-Module $loggingPath -Force -Global
+    Write-Host "Imported Logging module" -ForegroundColor Green
+    
+    Write-Host "Importing Authentication module..." -ForegroundColor Cyan
+    Import-Module $authenticationPath -Force -Global
+    Write-Host "Imported Authentication module" -ForegroundColor Green
+    
+    Write-Host "Importing Pricing module..." -ForegroundColor Cyan
+    Import-Module $pricingPath -Force -Global
+    Write-Host "Imported Pricing module" -ForegroundColor Green
+    
+    Write-Host "Importing DataCollection module..." -ForegroundColor Cyan
+    Import-Module $dataCollectionPath -Force -Global
+    Write-Host "Imported DataCollection module" -ForegroundColor Green
+    
+    Write-Host "Importing CostEstimation module..." -ForegroundColor Cyan
+    Import-Module $costEstimationPath -Force -Global
+    Write-Host "Imported CostEstimation module" -ForegroundColor Green
+    
+    Write-Host "Importing Reporting module..." -ForegroundColor Cyan
+    Import-Module $reportingPath -Force -Global
+    Write-Host "Imported Reporting module" -ForegroundColor Green
+    
+    # Restore original PSModulePath
+    $env:PSModulePath = $originalPSModulePath
+}
+catch {
+    Write-Error "Error loading modules: $($_.Exception.Message)"
+    exit 1
 }
 
 # Setup and Initialization
