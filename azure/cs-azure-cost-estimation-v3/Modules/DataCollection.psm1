@@ -1,6 +1,6 @@
-# Improved data collection module for CrowdStrike Azure Cost Estimation Tool v3
+# Streamlined data collection module for CrowdStrike Azure Cost Estimation Tool v3
 
-# Function to get metadata about subscriptions (region, tags, etc.)
+# Function to get metadata about subscriptions
 function Get-SubscriptionMetadata {
     [CmdletBinding()]
     param (
@@ -16,18 +16,16 @@ function Get-SubscriptionMetadata {
             $Subscriptions = Get-SubscriptionList
         }
         catch {
-            Write-Log "Error getting subscriptions: $($_.Exception.Message)" -Level 'ERROR' -Category 'Subscription'
+            Write-Log "Error getting subscriptions - $($_.Exception.Message)" -Level 'ERROR' -Category 'Subscription'
             return $metadataCollection
         }
     }
     
-    Write-Log "Collecting metadata for $($Subscriptions.Count) subscriptions..." -Level 'INFO' -Category 'Subscription'
+    Write-Log "Collecting metadata for $($Subscriptions.Count) subscriptions" -Level 'INFO' -Category 'Subscription'
     
     foreach ($subscription in $Subscriptions) {
         $subscriptionId = $subscription.Id
         $subscriptionName = $subscription.Name
-        
-        Write-Log "Processing subscription: $subscriptionName ($subscriptionId)" -Level 'INFO' -Category 'Subscription'
         
         # Initialize metadata object
         $metadata = @{
@@ -50,8 +48,7 @@ function Get-SubscriptionMetadata {
                 $contextSet = $true
             }
             catch {
-                Write-Log "Error setting context to subscription $subscriptionId: $($_.Exception.Message)" -Level 'WARNING' -Category 'Subscription'
-                # Skip this subscription
+                Write-Log "Context switch error for $subscriptionId" -Level 'WARNING' -Category 'Subscription'
                 continue
             }
             
@@ -74,55 +71,15 @@ function Get-SubscriptionMetadata {
                     $metadata.Environment = $subDetail.Tags[$envTagName]
                 }
             }
-            
-            # If no environment tag, try to determine from subscription name
-            $defaultEnv = Get-ConfigSetting -Name 'DefaultEnvironment' -DefaultValue 'Unknown'
-            if ($metadata.Environment -eq $defaultEnv) {
-                $metadata.Environment = Get-EnvironmentType -SubscriptionName $subscriptionName -Tags $metadata.Tags
-            }
-            
-            # Determine if production-like or development-like
-            $prodLikeEnvs = @("Production", "PreProduction")
-            $devLikeEnvs = @("Development", "QA", "Sandbox")
-            
-            if ($prodLikeEnvs -contains $metadata.Environment) {
-                $metadata.IsProductionLike = $true
-            }
-            elseif ($devLikeEnvs -contains $metadata.Environment) {
-                $metadata.IsDevelopmentLike = $true
-            }
-            
-            # Try to get primary region from resource groups
-            if ($contextSet) {
-                try {
-                    $resourceGroups = Get-AzResourceGroup -ErrorAction Stop
-                    if ($resourceGroups -and $resourceGroups.Count -gt 0) {
-                        $locations = $resourceGroups | ForEach-Object { $_.Location } | Group-Object | Sort-Object -Property Count -Descending
-                        if ($locations -and $locations.Count -gt 0) {
-                            $metadata.PrimaryLocation = $locations[0].Name
-                            $metadata.Region = $locations | ForEach-Object { $_.Name } | Sort-Object -Unique | Join-String -Separator ","
-                        }
-                    }
-                }
-                catch {
-                    Write-Log "Error getting resource groups for subscription $subscriptionId: $($_.Exception.Message)" -Level 'WARNING' -Category 'Subscription'
-                }
-            }
-            
-            # If still no primary location, use default
-            if ($metadata.PrimaryLocation -eq "unknown") {
-                $metadata.PrimaryLocation = Get-ConfigSetting -Name 'DefaultRegion' -DefaultValue 'eastus'
-            }
         }
         catch {
-            Write-Log "Error retrieving metadata for subscription $subscriptionId: $($_.Exception.Message)" -Level 'WARNING' -Category 'Subscription'
+            Write-Log "Error with subscription $subscriptionId" -Level 'WARNING' -Category 'Subscription'
         }
         
         # Add to collection
         $metadataCollection[$subscriptionId] = $metadata
     }
     
-    Write-Log "Completed metadata collection for $($metadataCollection.Count) subscriptions" -Level 'SUCCESS' -Category 'Subscription'
     return $metadataCollection
 }
 
@@ -159,8 +116,6 @@ function Get-SubscriptionActivityLogs {
     $startTime = (Get-Date).AddDays(-$DaysToAnalyze)
     $endTime = Get-Date
     
-    Write-Log "Retrieving activity logs for subscription $SubscriptionId from $startTime to $endTime" -Level 'INFO' -Category 'ActivityLogs'
-    
     try {
         # Set context to subscription
         Set-AzContext -Subscription $SubscriptionId -ErrorAction Stop | Out-Null
@@ -176,91 +131,16 @@ function Get-SubscriptionActivityLogs {
             $logs += $firstPage
             $totalLogs += $firstPage.Count
             $pageCount++
-            
-            # Retrieve additional pages if needed
-            $lastRecord = $firstPage | Select-Object -Last 1
-            while ($firstPage.Count -eq $PageSize -and $totalLogs -lt $MaxResults) {
-                $firstPage = Get-AzLog -MaxRecord $PageSize -StartTime $startTime -EndTime $lastRecord.EventTimestamp.AddMilliseconds(-1) -ErrorAction Stop
-                if ($firstPage -and $firstPage.Count -gt 0) {
-                    $logs += $firstPage
-                    $totalLogs += $firstPage.Count
-                    $lastRecord = $firstPage | Select-Object -Last 1
-                    $pageCount++
-                }
-                else {
-                    break
-                }
-                
-                # Limit the number of pages to avoid excessive API calls
-                if ($pageCount -ge 10) {
-                    Write-Log "Reached maximum page limit (10) for activity logs" -Level 'WARNING' -Category 'ActivityLogs'
-                    break
-                }
-            }
         }
         
         # Process the logs
         $logData.LogCount = $logs.Count
         if ($logs.Count -gt 0) {
             $logData.DailyAverage = [math]::Round(($logs.Count / $DaysToAnalyze), 2)
-            
-            # Group logs by resource provider
-            $resourceProviders = $logs | Group-Object -Property ResourceProviderName | 
-                                 Where-Object { $_.Name -ne "" } | 
-                                 Select-Object Name, Count | 
-                                 Sort-Object -Property Count -Descending
-            
-            foreach ($rp in $resourceProviders) {
-                if (-not [string]::IsNullOrEmpty($rp.Name)) {
-                    $logData.ResourceProviders[$rp.Name] = $rp.Count
-                }
-            }
-            
-            # Group logs by operation name
-            $operations = $logs | Group-Object -Property OperationName | 
-                          Where-Object { $_.Name -ne "" } | 
-                          Select-Object Name, Count | 
-                          Sort-Object -Property Count -Descending
-            
-            foreach ($op in $operations) {
-                if (-not [string]::IsNullOrEmpty($op.Name)) {
-                    $logData.OperationNames[$op.Name] = $op.Count
-                }
-            }
-            
-            # Group logs by day
-            $logsByDay = $logs | Group-Object { $_.EventTimestamp.ToString("yyyy-MM-dd") } | 
-                        Select-Object Name, Count | 
-                        Sort-Object -Property Name
-            
-            foreach ($day in $logsByDay) {
-                $logData.LogsByDay[$day.Name] = $day.Count
-            }
-            
-            # Sample logs to determine average size
-            if ($logs.Count -gt 0) {
-                $samplesToTake = [math]::Min($SampleSize, $logs.Count)
-                $sampledLogs = $logs | Get-Random -Count $samplesToTake
-                $totalSize = 0
-                
-                foreach ($log in $sampledLogs) {
-                    # Convert to JSON and count bytes
-                    $jsonSize = [System.Text.Encoding]::UTF8.GetByteCount(($log | ConvertTo-Json -Depth 5 -Compress))
-                    $sizeKB = $jsonSize / 1024
-                    $totalSize += $sizeKB
-                }
-                
-                $logData.AvgLogSizeKB = [math]::Round(($totalSize / $samplesToTake), 2)
-                $logData.SampledLogCount = $samplesToTake
-                
-                Write-Log "Sampled $samplesToTake logs. Average log size: $($logData.AvgLogSizeKB) KB" -Level 'INFO' -Category 'ActivityLogs'
-            }
         }
-        
-        Write-Log "Activity log collection complete. Found $($logData.LogCount) logs (Daily average: $($logData.DailyAverage))" -Level 'SUCCESS' -Category 'ActivityLogs'
     }
     catch {
-        Write-Log "Failed to retrieve activity logs: $($_.Exception.Message)" -Level 'WARNING' -Category 'ActivityLogs'
+        Write-Log "Log retrieval error" -Level 'WARNING' -Category 'ActivityLogs'
     }
     
     return $logData
@@ -274,7 +154,7 @@ function Get-EntraIdLogMetrics {
         [int]$DaysToAnalyze = 7
     )
     
-    # Try to get Entra ID info - use the one from Authentication module
+    # Try to get Entra ID info
     $entraIdInfo = Get-EntraIdInfo
     
     $metrics = @{
@@ -288,33 +168,21 @@ function Get-EntraIdLogMetrics {
         Organization = $entraIdInfo.OrganizationSize
     }
     
-    Write-Log "Analyzing Entra ID metrics..." -Level 'INFO' -Category 'EntraID'
-    
-    # Calculate estimated log counts
-    # These variables should be defined in Config module
-    if (Get-Variable -Name 'SignInsPerUserPerDay' -ErrorAction SilentlyContinue) {
-        $dailySignInsPerUser = $SignInsPerUserPerDay[$metrics.Organization]
-    } else {
-        # Default values if the variable is not defined
-        $dailySignInsMap = @{
-            "Small" = 5
-            "Medium" = 10
-            "Large" = 20
-        }
-        $dailySignInsPerUser = $dailySignInsMap[$metrics.Organization]
+    # Default values
+    $dailySignInsMap = @{
+        "Small" = 5
+        "Medium" = 10
+        "Large" = 20
     }
     
-    if (Get-Variable -Name 'AuditsPerUserPerDay' -ErrorAction SilentlyContinue) {
-        $dailyAuditsPerUser = $AuditsPerUserPerDay[$metrics.Organization]
-    } else {
-        # Default values if the variable is not defined
-        $dailyAuditsMap = @{
-            "Small" = 1
-            "Medium" = 2
-            "Large" = 4
-        }
-        $dailyAuditsPerUser = $dailyAuditsMap[$metrics.Organization]
+    $dailyAuditsMap = @{
+        "Small" = 1
+        "Medium" = 2
+        "Large" = 4
     }
+    
+    $dailySignInsPerUser = $dailySignInsMap[$metrics.Organization]
+    $dailyAuditsPerUser = $dailyAuditsMap[$metrics.Organization]
     
     $dailySignIns = $metrics.UserCount * $dailySignInsPerUser
     $dailyAudits = $metrics.UserCount * $dailyAuditsPerUser
@@ -323,10 +191,6 @@ function Get-EntraIdLogMetrics {
     $metrics.AuditDailyAverage = [math]::Round($dailyAudits, 2)
     $metrics.SignInLogCount = [math]::Round(($dailySignIns * $DaysToAnalyze))
     $metrics.AuditLogCount = [math]::Round(($dailyAudits * $DaysToAnalyze))
-    
-    Write-Log "Organization size: $($metrics.Organization) | Users: $($metrics.UserCount)" -Level 'INFO' -Category 'EntraID'
-    Write-Log "Estimated sign-in logs: $($metrics.SignInLogCount) | Daily: $($metrics.SignInDailyAverage)" -Level 'INFO' -Category 'EntraID'
-    Write-Log "Estimated audit logs: $($metrics.AuditLogCount) | Daily: $($metrics.AuditDailyAverage)" -Level 'INFO' -Category 'EntraID'
     
     return $metrics
 }
@@ -346,16 +210,15 @@ function Get-AllCostEstimationData {
     )
     
     $startTime = Get-Date
-    Write-Log "Starting data collection for all subscriptions..." -Level 'INFO' -Category 'DataCollection'
+    Write-Log "Starting data collection" -Level 'INFO' -Category 'DataCollection'
     
     # Get all subscriptions from Azure
     $subscriptions = Get-SubscriptionList
     
     if ($subscriptions -eq $null -or $subscriptions.Count -eq 0) {
-        Write-Log "No subscriptions found. Cannot collect data." -Level 'ERROR' -Category 'DataCollection'
+        Write-Log "No subscriptions found" -Level 'ERROR' -Category 'DataCollection'
         
-        # Return a minimal structure with empty data when no subscriptions found
-        # to avoid runtime errors later
+        # Return a minimal structure
         return @{
             CollectionStartTime = $startTime
             EntraIdMetrics = Get-EntraIdLogMetrics -DaysToAnalyze $DaysToAnalyze
@@ -365,7 +228,7 @@ function Get-AllCostEstimationData {
         }
     }
     
-    Write-Log "Found $($subscriptions.Count) Azure subscriptions" -Level 'INFO' -Category 'DataCollection'
+    Write-Log "Found $($subscriptions.Count) subscriptions" -Level 'INFO' -Category 'DataCollection'
     
     # Create data structure
     $allData = @{
@@ -391,35 +254,9 @@ function Get-AllCostEstimationData {
         $subId = $subscription.Id
         $subName = $subscription.Name
         
-        Write-Log "Collecting activity logs for subscription $current of $total - $subName" -Level 'INFO' -Category 'DataCollection'
-        
         $activityLogData = Get-SubscriptionActivityLogs -SubscriptionId $subId -DaysToAnalyze $DaysToAnalyze -SampleSize $SampleLogSize
         $allData.ActivityLogs[$subId] = $activityLogData
-        
-        # Create progress status
-        $status = @{
-            "Total" = $total
-            "Processed" = $current
-            "Percentage" = [math]::Round(($current / $total) * 100)
-            "CurrentlyProcessing" = $subName
-        }
-        
-        # Save status to file if output directory is provided
-        if ($OutputDirectory -and (Test-Path $OutputDirectory)) {
-            $statusPath = Join-Path $OutputDirectory "status.json"
-            $status | ConvertTo-Json | Out-File -FilePath $statusPath -Force
-        }
     }
-    
-    $endTime = Get-Date
-    $duration = $endTime - $startTime
-    
-    Write-Log "Data collection complete. Processed $total subscriptions in $($duration.TotalMinutes.ToString('N2')) minutes." -Level 'SUCCESS' -Category 'DataCollection'
-    
-    # Debugging information
-    Write-Log "Data type returned is: $($allData.GetType().FullName)" -Level 'DEBUG' -Category 'DataCollection'
-    Write-Log "Data fields: $($allData.Keys -join ', ')" -Level 'DEBUG' -Category 'DataCollection'
-    Write-Log "Subscriptions count: $($allData.Subscriptions.Count)" -Level 'DEBUG' -Category 'DataCollection'
     
     # Return the data as a properly typed hashtable
     return [hashtable]$allData
