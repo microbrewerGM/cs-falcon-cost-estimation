@@ -24,6 +24,9 @@ function Get-ActivityLogMetrics {
     .PARAMETER SampleDays
         Number of days to sample for metrics collection.
         
+    .PARAMETER OutputDir
+        Directory to write logs to.
+        
     .OUTPUTS
         [PSCustomObject] Object containing Activity Log metrics.
     #>
@@ -32,7 +35,10 @@ function Get-ActivityLogMetrics {
         [string]$SubscriptionId,
         
         [Parameter(Mandatory = $false)]
-        [int]$SampleDays = 7
+        [int]$SampleDays = 7,
+        
+        [Parameter(Mandatory = $false)]
+        [string]$OutputDir = $null
     )
     
     $currentContext = $null
@@ -50,8 +56,32 @@ function Get-ActivityLogMetrics {
         Write-Host "Collecting Activity Log metrics for subscription: $($currentContext.Subscription.Name)" -ForegroundColor Cyan
         Write-Host "Time range: $startTime to $endTime" -ForegroundColor DarkGray
         
-        # Retrieve Activity Logs for the time period
-        $activityLogs = Get-AzLog -StartTime $startTime -EndTime $endTime
+        # Retrieve Activity Logs for the time period with detailed status updates
+        Write-Host "Starting Activity Log query for subscription: $($currentContext.Subscription.Name) (this may take some time)..." -ForegroundColor Cyan
+        
+        # Write to log file if OutputDir is provided
+        if ($OutputDir) {
+            Write-LogEntry -Message "Starting Activity Log query for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
+        }
+        
+        # Show progress indicator while querying
+        $progressParams = @{
+            Activity = "Retrieving Activity Logs" 
+            Status = "Querying logs for subscription: $($currentContext.Subscription.Name)"
+            PercentComplete = 10
+        }
+        Write-Progress @progressParams
+        
+        # Using Get-AzActivityLog instead of deprecated Get-AzLog
+        $activityLogs = Get-AzActivityLog -StartTime $startTime -EndTime $endTime
+        
+        Write-Progress @progressParams -PercentComplete 100 -Completed
+        Write-Host "Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries." -ForegroundColor Green
+        
+        # Write to log file if OutputDir is provided
+        if ($OutputDir) {
+            Write-LogEntry -Message "Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries." -OutputDir $OutputDir
+        }
         
         # If no logs found, return empty metrics
         if ($null -eq $activityLogs -or $activityLogs.Count -eq 0) {
@@ -133,6 +163,9 @@ function Get-ActivityLogMetricsForAllSubscriptions {
     .PARAMETER SampleDays
         Number of days to sample for metrics collection.
         
+    .PARAMETER OutputDir
+        Directory to write logs to.
+        
     .OUTPUTS
         [PSCustomObject[]] Array of Activity Log metrics objects.
     #>
@@ -141,7 +174,10 @@ function Get-ActivityLogMetricsForAllSubscriptions {
         [object[]]$Subscriptions,
         
         [Parameter(Mandatory = $false)]
-        [int]$SampleDays = 7
+        [int]$SampleDays = 7,
+        
+        [Parameter(Mandatory = $false)]
+        [string]$OutputDir = $null
     )
     
     $allMetrics = @()
@@ -163,7 +199,13 @@ function Get-ActivityLogMetricsForAllSubscriptions {
         
         # Get metrics for this subscription
         Write-Host "Processing subscription: $($subscription.Name) ($($subscription.Id))" -ForegroundColor Cyan
-        $metrics = Get-ActivityLogMetrics -SubscriptionId $subscription.Id -SampleDays $SampleDays
+        
+        # Write to log file if OutputDir is provided
+        if ($OutputDir) {
+            Write-LogEntry -Message "Processing subscription: $($subscription.Name) ($($subscription.Id))" -OutputDir $OutputDir
+        }
+        
+        $metrics = Get-ActivityLogMetrics -SubscriptionId $subscription.Id -SampleDays $SampleDays -OutputDir $OutputDir
         
         # Check if there was an error in the metrics retrieval
         if ($metrics.PSObject.Properties.Name -contains "Error") {

@@ -113,7 +113,7 @@ function Start-AzureCostEstimation {
     
     # Collect Activity Log metrics
     Write-LogEntry -Message "Collecting Activity Log metrics for all subscriptions..." -OutputDir $outputDir
-    $activityLogMetrics = Get-ActivityLogMetricsForAllSubscriptions -Subscriptions $subscriptions -SampleDays $Script:Config.DefaultSampleDays
+    $activityLogMetrics = Get-ActivityLogMetricsForAllSubscriptions -Subscriptions $subscriptions -SampleDays $Script:Config.DefaultSampleDays -OutputDir $outputDir
     
     # Count successful and failed metrics
     $failedMetrics = @($activityLogMetrics | Where-Object { $_.PSObject.Properties.Name -contains "Error" })

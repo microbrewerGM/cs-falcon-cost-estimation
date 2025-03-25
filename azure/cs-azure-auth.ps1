@@ -61,22 +61,29 @@ function Connect-ToAzure {
         Write-Host "Successfully authenticated as: $($context.Account.Id)" -ForegroundColor Green
         Write-Host "Current subscription context: $($context.Subscription.Name)" -ForegroundColor Green
         
-        # Determine if this is a tenant environment by checking for >1 tenant
+        # Always assume we're in a tenant environment unless explicitly proven otherwise
+        # This ensures we'll try to get all subscriptions by default
+        $Script:IsTenantEnvironment = $true
+        
         try {
+            # Check tenant information
             $tenants = Get-AzTenant -ErrorAction Stop
-            if ($tenants -and $tenants.Count -gt 1) {
-                Write-Host "Detected multiple tenants ($($tenants.Count)). This appears to be an organizational tenant environment." -ForegroundColor Cyan
-                $Script:IsTenantEnvironment = $true
-                
-                # Log tenant information
-                $tenants | Select-Object Id, Name, DefaultDomain | Format-Table -AutoSize
-            }
-            else {
-                Write-Host "Detected single tenant environment. This appears to be a standalone subscription." -ForegroundColor Cyan
+            
+            # Log tenant detection information
+            if ($tenants -and $tenants.Count -gt 0) {
+                if ($tenants.Count -gt 1) {
+                    Write-Host "Detected multiple tenants ($($tenants.Count)). This is an organizational tenant environment." -ForegroundColor Cyan
+                    
+                    # Log tenant information
+                    $tenants | Select-Object Id, Name, DefaultDomain | Format-Table -AutoSize
+                } else {
+                    Write-Host "Detected single tenant ($($tenants[0].Name)) with ID: $($tenants[0].Id)" -ForegroundColor Cyan
+                    Write-Host "Will still attempt to retrieve all subscriptions within this tenant." -ForegroundColor Cyan
+                }
             }
         }
         catch {
-            Write-Host "Unable to query tenant information. Assuming standalone subscription." -ForegroundColor Yellow
+            Write-Host "Unable to query tenant information, but will still attempt to retrieve all accessible subscriptions." -ForegroundColor Yellow
             Write-Host "Error details: $_" -ForegroundColor DarkGray
         }
         
@@ -90,20 +97,9 @@ function Connect-ToAzure {
                 Write-Host "Initial authentication failed, but found existing context." -ForegroundColor Yellow
                 Write-Host "Using current subscription context: $($context.Subscription.Name)" -ForegroundColor Yellow
                 
-                # Try to determine if this is a tenant environment using the existing context
-                try {
-                    $tenants = Get-AzTenant -ErrorAction Stop
-                    if ($tenants -and $tenants.Count -gt 1) {
-                        Write-Host "Detected multiple tenants ($($tenants.Count)). This appears to be an organizational tenant environment." -ForegroundColor Cyan
-                        $Script:IsTenantEnvironment = $true
-                    }
-                    else {
-                        Write-Host "Detected single tenant environment. This appears to be a standalone subscription." -ForegroundColor Cyan
-                    }
-                }
-                catch {
-                    Write-Host "Unable to query tenant information. Assuming standalone subscription." -ForegroundColor Yellow
-                }
+                # Always assume we're in a tenant environment unless explicitly proven otherwise
+                $Script:IsTenantEnvironment = $true
+                Write-Host "Will attempt to retrieve all accessible subscriptions." -ForegroundColor Cyan
                 
                 return $true
             }
