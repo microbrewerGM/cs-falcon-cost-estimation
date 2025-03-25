@@ -12,10 +12,7 @@ function Initialize-Configuration {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)]
-        [string]$CustomConfigPath = "",
-
-        [Parameter(Mandatory = $false)]
-        [switch]$Verbose = $false
+        [string]$CustomConfigPath = ""
     )
 
     # Get all PS1 files in the config directory
@@ -31,19 +28,19 @@ function Initialize-Configuration {
     foreach ($file in $configFiles) {
         $filePath = Join-Path $script:ConfigDir $file
         if (Test-Path $filePath) {
-            if ($Verbose) {
+            if ($VerbosePreference -eq 'Continue') {
                 Write-Host "Loading configuration from $filePath" -ForegroundColor Cyan
             }
-            
+
             # Create a new scope and load variables from the config file
             $configData = & {
                 # Source the config file and capture all variables
                 . $filePath
                 # Get all variables that are not automatic variables
-                Get-Variable | Where-Object { 
-                    $_.Name -notlike "*?*" -and 
-                    $_.Name -ne "filePath" -and 
-                    $_.Name -ne "file" -and 
+                Get-Variable | Where-Object {
+                    $_.Name -notlike "*?*" -and
+                    $_.Name -ne "filePath" -and
+                    $_.Name -ne "file" -and
                     $_.Name -ne "configFiles" -and
                     $_.Name -ne "configData" -and
                     $_.Name -notin @("PSCmdlet", "PSBoundParameters", "file", "Verbose")
@@ -62,25 +59,25 @@ function Initialize-Configuration {
 
     # Load custom configuration file if specified
     if (-not [string]::IsNullOrWhiteSpace($CustomConfigPath) -and (Test-Path $CustomConfigPath)) {
-        if ($Verbose) {
+        if ($VerbosePreference -eq 'Continue') {
             Write-Host "Loading custom configuration from $CustomConfigPath" -ForegroundColor Yellow
         }
-        
+
         # Source the custom config file to override settings
         & {
             . $CustomConfigPath
             # Get all variables that are not automatic variables
-            $customVars = Get-Variable | Where-Object { 
-                $_.Name -notlike "*?*" -and 
-                $_.Name -ne "CustomConfigPath" -and 
+            $customVars = Get-Variable | Where-Object {
+                $_.Name -notlike "*?*" -and
+                $_.Name -ne "CustomConfigPath" -and
                 $_.Name -ne "Verbose" -and
                 $_.Name -notin @("PSCmdlet", "PSBoundParameters")
             }
-            
+
             # Override the settings with custom values
             foreach ($varObj in $customVars) {
                 $script:Config[$varObj.Name] = $varObj.Value
-                if ($Verbose) {
+                if ($VerbosePreference -eq 'Continue') {
                     Write-Host "  Overriding setting: $($varObj.Name)" -ForegroundColor Yellow
                 }
             }
@@ -97,15 +94,15 @@ function Get-ConfigSetting {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Name,
-        
+
         [Parameter(Mandatory = $false)]
         $DefaultValue = $null
     )
-    
+
     if ($script:Config.ContainsKey($Name)) {
         return $script:Config[$Name]
     }
-    
+
     return $DefaultValue
 }
 
@@ -115,11 +112,11 @@ function Set-ConfigSetting {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Name,
-        
+
         [Parameter(Mandatory = $true)]
         $Value
     )
-    
+
     $script:Config[$Name] = $Value
 }
 
@@ -128,49 +125,49 @@ function Initialize-OutputPaths {
     param (
         [Parameter(Mandatory = $false)]
         [string]$OutputDirectory = "",
-        
+
         [Parameter(Mandatory = $false)]
         [string]$OutputFilePath = "",
-        
+
         [Parameter(Mandatory = $false)]
         [string]$LogFilePath = ""
     )
 
     # Create a timestamp for directory naming
     $timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    
+
     # Create the output directory if not specified
     if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
         $OutputDirectory = "cs-azure-cost-estimate-$timestamp"
     }
-    
+
     # Create the output directory if it doesn't exist
     if (-not (Test-Path $OutputDirectory)) {
         New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null
         Write-Host "Created output directory: $OutputDirectory" -ForegroundColor Green
     }
-    
+
     # Create subdirectories
     $SubscriptionDataDir = Join-Path $OutputDirectory "subscription-data"
     $ManagementGroupDataDir = Join-Path $OutputDirectory "management-group-data"
     $PricingDataDir = Join-Path $OutputDirectory "pricing-data"
-    
+
     foreach ($dir in @($SubscriptionDataDir, $ManagementGroupDataDir, $PricingDataDir)) {
         if (-not (Test-Path $dir)) {
             New-Item -Path $dir -ItemType Directory -Force | Out-Null
             Write-Host "Created directory: $dir" -ForegroundColor Green
         }
     }
-    
+
     # Set default file paths if not specified
     if ([string]::IsNullOrWhiteSpace($OutputFilePath)) {
         $OutputFilePath = Join-Path $OutputDirectory "cs-azure-cost-estimate.csv"
     }
-    
+
     if ([string]::IsNullOrWhiteSpace($LogFilePath)) {
         $LogFilePath = Join-Path $OutputDirectory "cs-azure-cost-estimate.log"
     }
-    
+
     # Additional output files
     $SummaryJsonPath = Join-Path $OutputDirectory "summary.json"
     $StatusFilePath = Join-Path $OutputDirectory "script-status.json"
@@ -178,7 +175,7 @@ function Initialize-OutputPaths {
     $MgReportPath = Join-Path $OutputDirectory "management-group-costs.csv"
     $PricingCachePath = Join-Path $PricingDataDir "azure-pricing-cache.json"
     $HtmlReportPath = Join-Path $OutputDirectory "cs-azure-cost-estimate-report.html"
-    
+
     # Return all paths as a hashtable
     return @{
         OutputDirectory = $OutputDirectory
