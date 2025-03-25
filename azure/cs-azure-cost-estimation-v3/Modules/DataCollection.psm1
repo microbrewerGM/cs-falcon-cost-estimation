@@ -41,14 +41,53 @@ function Get-SubscriptionMetadata {
         }
         
         try {
-            # Set context to subscription
-            $contextSet = $false
-            try {
-                Set-AzContext -Subscription $subscriptionId -ErrorAction Stop | Out-Null
-                $contextSet = $true
+            # Check if we have a valid Azure connection
+            $currentContext = Get-AzContext -ErrorAction SilentlyContinue
+            if (-not $currentContext) {
+                Write-Log "No active Azure session found when processing subscription $subscriptionId" -Level 'WARNING' -Category 'Subscription'
+                continue
             }
-            catch {
-                Write-Log "Context switch error for $subscriptionId" -Level 'WARNING' -Category 'Subscription'
+            
+            # Set context to subscription with retry
+            $contextSet = $false
+            $retryCount = 0
+            $maxRetries = 2
+            
+            while (-not $contextSet -and $retryCount -le $maxRetries) {
+                try {
+                    # First check if subscription exists in this tenant
+                    $sub = Get-AzSubscription -SubscriptionId $subscriptionId -TenantId $currentContext.Tenant.Id -ErrorAction Stop
+                    if (-not $sub) {
+                        Write-Log "Subscription $subscriptionId not found in current tenant $($currentContext.Tenant.Id)" -Level 'WARNING' -Category 'Subscription'
+                        break
+                    }
+                    
+                    # Try to set context
+                    $contextResult = Set-AzContext -Subscription $subscriptionId -ErrorAction Stop
+                    if ($contextResult -and $contextResult.Subscription.Id -eq $subscriptionId) {
+                        $contextSet = $true
+                        Write-Log "Successfully set context to subscription $subscriptionId" -Level 'DEBUG' -Category 'Subscription'
+                    }
+                    else {
+                        throw "Context switch succeeded but returned unexpected subscription"
+                    }
+                }
+                catch {
+                    $retryCount++
+                    $errorMsg = if ($_.Exception) { $_.Exception.Message } else { "Unknown error" }
+                    
+                    if ($retryCount -le $maxRetries) {
+                        Write-Log "Retry $retryCount/$maxRetries: Context switch error for subscription $subscriptionId : $errorMsg" -Level 'DEBUG' -Category 'Subscription'
+                        Start-Sleep -Seconds 2  # Brief pause before retry
+                    }
+                    else {
+                        Write-Log "Context switch error for subscription $subscriptionId after $maxRetries retries: $errorMsg" -Level 'WARNING' -Category 'Subscription'
+                        break
+                    }
+                }
+            }
+            
+            if (-not $contextSet) {
                 continue
             }
             
@@ -73,7 +112,8 @@ function Get-SubscriptionMetadata {
             }
         }
         catch {
-            Write-Log "Error with subscription $subscriptionId" -Level 'WARNING' -Category 'Subscription'
+            $errorMsg = if ($_.Exception) { $_.Exception.Message } else { "Unknown error" }
+            Write-Log "Error with subscription $subscriptionId : $errorMsg" -Level 'WARNING' -Category 'Subscription'
         }
         
         # Add to collection
@@ -117,20 +157,74 @@ function Get-SubscriptionActivityLogs {
     $endTime = Get-Date
     
     try {
-        # Set context to subscription
-        Set-AzContext -Subscription $SubscriptionId -ErrorAction Stop | Out-Null
+        # Check if we have a valid Azure connection
+        $currentContext = Get-AzContext -ErrorAction SilentlyContinue
+        if (-not $currentContext) {
+            throw "No active Azure session found"
+        }
+        
+        # Set context to subscription with retry
+        $contextSet = $false
+        $retryCount = 0
+        $maxRetries = 2
+        
+        while (-not $contextSet -and $retryCount -le $maxRetries) {
+            try {
+                $contextResult = Set-AzContext -Subscription $SubscriptionId -ErrorAction Stop
+                if ($contextResult -and $contextResult.Subscription.Id -eq $SubscriptionId) {
+                    $contextSet = $true
+                    Write-Log "Context set to subscription $SubscriptionId for activity log retrieval" -Level 'DEBUG' -Category 'ActivityLogs'
+                }
+                else {
+                    throw "Context switch succeeded but returned unexpected subscription"
+                }
+            }
+            catch {
+                $retryCount++
+                $errorMsg = if ($_.Exception) { $_.Exception.Message } else { "Unknown error" }
+                
+                if ($retryCount -le $maxRetries) {
+                    Write-Log "Retry $retryCount/$maxRetries: Context switch error for log retrieval: $errorMsg" -Level 'DEBUG' -Category 'ActivityLogs'
+                    Start-Sleep -Seconds 2  # Brief pause before retry
+                }
+                else {
+                    throw "Failed to set context after $maxRetries retries: $errorMsg"
+                }
+            }
+        }
         
         # Using Az PowerShell for activity logs instead of REST API
         $logs = @()
         $pageCount = 0
         $totalLogs = 0
         
-        # Get first page
-        $firstPage = Get-AzLog -MaxRecord $PageSize -StartTime $startTime -EndTime $endTime -ErrorAction Stop
-        if ($firstPage) {
-            $logs += $firstPage
-            $totalLogs += $firstPage.Count
-            $pageCount++
+        # Get logs with retry logic
+        $logRetryCount = 0
+        $logMaxRetries = 2
+        $logSuccess = $false
+        
+        while (-not $logSuccess -and $logRetryCount -le $logMaxRetries) {
+            try {
+                $firstPage = Get-AzLog -MaxRecord $PageSize -StartTime $startTime -EndTime $endTime -ErrorAction Stop
+                if ($firstPage) {
+                    $logs += $firstPage
+                    $totalLogs += $firstPage.Count
+                    $pageCount++
+                }
+                $logSuccess = $true
+            }
+            catch {
+                $logRetryCount++
+                $errorMsg = if ($_.Exception) { $_.Exception.Message } else { "Unknown error" }
+                
+                if ($logRetryCount -le $logMaxRetries) {
+                    Write-Log "Retry $logRetryCount/$logMaxRetries: Error retrieving logs: $errorMsg" -Level 'DEBUG' -Category 'ActivityLogs'
+                    Start-Sleep -Seconds 3  # Slightly longer pause for API rate limits
+                }
+                else {
+                    throw "Failed to retrieve logs after $logMaxRetries retries: $errorMsg"
+                }
+            }
         }
         
         # Process the logs
@@ -140,7 +234,8 @@ function Get-SubscriptionActivityLogs {
         }
     }
     catch {
-        Write-Log "Log retrieval error" -Level 'WARNING' -Category 'ActivityLogs'
+        $errorMsg = if ($_.Exception) { $_.Exception.Message } else { "Unknown error" }
+        Write-Log "Log retrieval error for subscription $SubscriptionId : $errorMsg" -Level 'WARNING' -Category 'ActivityLogs'
     }
     
     return $logData
@@ -271,7 +366,8 @@ function Get-AllCostEstimationData {
             $allData.ActivityLogs[$subId] = $activityLogData
         }
         catch {
-            Write-Log "Error collecting activity logs for subscription $subId" -Level 'WARNING' -Category 'DataCollection'
+            $errorMsg = if ($_.Exception) { $_.Exception.Message } else { "Unknown error" }
+            Write-Log "Error collecting activity logs for subscription $subId : $errorMsg" -Level 'WARNING' -Category 'DataCollection'
             # Create empty activity log data with default values
             $allData.ActivityLogs[$subId] = @{
                 LogCount = 0
