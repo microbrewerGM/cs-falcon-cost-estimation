@@ -1,7 +1,4 @@
-# Cost Estimation Module for CrowdStrike Azure Cost Estimation Tool
-
-# Note: Do not import modules here - they should be imported by the main script
-# This avoids issues with duplicate module loading and function scope
+# Simplified cost estimation module for CrowdStrike Azure Cost Estimation Tool v3
 
 # Function to calculate size-based requirements
 function Get-SizeBasedRequirements {
@@ -13,10 +10,22 @@ function Get-SizeBasedRequirements {
         [hashtable]$EntraIdData,
         
         [Parameter(Mandatory = $false)]
-        [int]$RetentionDays = $LogRetentionDays,
+        [int]$RetentionDays = (Get-ConfigSetting -Name 'LogRetentionDays' -DefaultValue 30),
         
         [Parameter(Mandatory = $false)]
-        [int]$EventsPerSecondPerInstance = $EventsPerInstancePerSecond
+        [int]$EventsPerSecondPerInstance = (Get-ConfigSetting -Name 'EventsPerInstancePerSecond' -DefaultValue 5000),
+        
+        [Parameter(Mandatory = $false)]
+        [int]$MinimumThroughputUnits = (Get-ConfigSetting -Name 'MinimumThroughputUnits' -DefaultValue 1),
+        
+        [Parameter(Mandatory = $false)]
+        [int]$MaximumThroughputUnits = (Get-ConfigSetting -Name 'MaximumThroughputUnits' -DefaultValue 20),
+        
+        [Parameter(Mandatory = $false)]
+        [int]$MinimumFunctionInstances = (Get-ConfigSetting -Name 'MinimumFunctionInstances' -DefaultValue 1),
+        
+        [Parameter(Mandatory = $false)]
+        [int]$MaximumFunctionInstances = (Get-ConfigSetting -Name 'MaximumFunctionInstances' -DefaultValue 10)
     )
     
     $requirements = @{
@@ -36,8 +45,8 @@ function Get-SizeBasedRequirements {
     
     # Calculate total events per day
     $requirements.TotalEventsPerDay = $requirements.ActivityLogEventsPerDay + 
-                                      $requirements.EntraSignInEventsPerDay + 
-                                      $requirements.EntraAuditEventsPerDay
+                                     $requirements.EntraSignInEventsPerDay + 
+                                     $requirements.EntraAuditEventsPerDay
     
     # Calculate average events per second
     $requirements.EventsPerSecond = [math]::Ceiling($requirements.TotalEventsPerDay / 86400)
@@ -49,8 +58,8 @@ function Get-SizeBasedRequirements {
     $totalEvents = $LogData.LogCount + $EntraIdData.SignInLogCount + $EntraIdData.AuditLogCount
     if ($totalEvents -gt 0) {
         $weightedSize = (($LogData.LogCount * $LogData.AvgLogSizeKB) + 
-                        ($EntraIdData.SignInLogCount * $EntraIdData.SignInSize) + 
-                        ($EntraIdData.AuditLogCount * $EntraIdData.AuditSize)) / $totalEvents
+                       ($EntraIdData.SignInLogCount * $EntraIdData.SignInSize) + 
+                       ($EntraIdData.AuditLogCount * $EntraIdData.AuditSize)) / $totalEvents
         $requirements.AvgLogSizeKB = [math]::Round($weightedSize, 2)
     }
     else {
@@ -60,7 +69,7 @@ function Get-SizeBasedRequirements {
     
     # Calculate daily storage usage (GB)
     $dailyDataKB = $requirements.TotalEventsPerDay * $requirements.AvgLogSizeKB
-    $requirements.DailyStorageUsageGB = [math]::Round($dailyDataKB / 1024, 2)
+    $requirements.DailyStorageUsageGB = [math]::Round($dailyDataKB / 1024 / 1024, 2)
     
     # Calculate monthly storage (GB)
     $requirements.MonthlyStorageUsageGB = [math]::Round($requirements.DailyStorageUsageGB * 30, 2)
@@ -92,10 +101,10 @@ function Get-CostEstimates {
         [hashtable]$Pricing,
         
         [Parameter(Mandatory = $false)]
-        [int]$MonthlyKeyVaultOperations = $KeyVaultMonthlyOperations,
+        [int]$MonthlyKeyVaultOperations = (Get-ConfigSetting -Name 'KeyVaultMonthlyOperations' -DefaultValue 100000),
         
         [Parameter(Mandatory = $false)]
-        [int]$PrivateEndpointCount = $FixedResourceCosts.PrivateEndpointCount,
+        [hashtable]$FixedResourceCosts = $(Get-Variable -Name 'FixedResourceCosts' -ValueOnly -ErrorAction SilentlyContinue),
         
         [Parameter(Mandatory = $false)]
         [bool]$UseVpnGateway = $false
@@ -113,20 +122,21 @@ function Get-CostEstimates {
     }
     
     # Calculate Event Hub cost
-    $estimates.EventHubCost = [math]::Round($Requirements.EventHubThroughputUnits * $Pricing.EventHubTU, 2)
+    $estimates.EventHubCost = [math]::Round($Requirements.EventHubThroughputUnits * $Pricing.EventHubTU * 730, 2)
     
     # Calculate Storage cost
     $estimates.StorageCost = [math]::Round($Requirements.StorageAccountSizeGB * $Pricing.StorageGB, 2)
     
     # Calculate Function App cost
-    $estimates.FunctionAppCost = [math]::Round($Requirements.FunctionAppInstances * $Pricing.FunctionAppP0V3, 2)
+    $estimates.FunctionAppCost = [math]::Round($Requirements.FunctionAppInstances * $Pricing.FunctionAppP0V3 * 730, 2)
     
     # Calculate Key Vault cost
     $keyVaultOperationsTenK = [math]::Ceiling($MonthlyKeyVaultOperations / 10000)
     $estimates.KeyVaultCost = [math]::Round($keyVaultOperationsTenK * $Pricing.KeyVault, 2)
     
     # Calculate Networking costs
-    $privateEndpointHours = $PrivateEndpointCount * 730 # Hours in a month
+    $privateEndpointCount = $FixedResourceCosts.PrivateEndpointCount
+    $privateEndpointHours = $privateEndpointCount * 730 # Hours in a month
     $privateEndpointCost = $privateEndpointHours * $Pricing.PrivateEndpoint
     
     $vpnGatewayCost = 0
@@ -183,7 +193,7 @@ function Get-SubscriptionCostEstimate {
         [bool]$IsProductionEnvironment = $false,
         
         [Parameter(Mandatory = $false)]
-        [string]$BusinessUnit = $DefaultBusinessUnit
+        [string]$BusinessUnit = $(Get-ConfigSetting -Name 'DefaultBusinessUnit' -DefaultValue 'Unassigned')
     )
     
     # Get size-based requirements
@@ -198,6 +208,7 @@ function Get-SubscriptionCostEstimate {
     # Create subscription cost estimate object
     $subscriptionEstimate = @{
         SubscriptionId = $SubscriptionId
+        SubscriptionName = $SubscriptionMetadata.SubscriptionName
         BusinessUnit = $BusinessUnit
         Environment = $SubscriptionMetadata.Environment
         Region = $SubscriptionMetadata.PrimaryLocation
@@ -219,9 +230,63 @@ function Get-SubscriptionCostEstimate {
             ThroughputUnits = $requirements.EventHubThroughputUnits
             FunctionInstances = $requirements.FunctionAppInstances
         }
+        MonthlyBreakdown = $costEstimates.MonthlyBreakdown
     }
     
     return $subscriptionEstimate
+}
+
+# Function to calculate costs for all subscriptions
+function Get-AllSubscriptionsCostEstimate {
+    param (
+        [Parameter(Mandatory = $true)]
+        [hashtable]$CollectedData,
+        
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Pricing
+    )
+    
+    $estimates = @()
+    $subscriptions = $CollectedData.Subscriptions
+    $entraIdMetrics = $CollectedData.EntraIdMetrics
+    $subscriptionMetadata = $CollectedData.SubscriptionMetadata
+    $activityLogs = $CollectedData.ActivityLogs
+    
+    Write-Log "Calculating cost estimates for $($subscriptions.Count) subscriptions..." -Level 'INFO' -Category 'CostEstimation'
+    
+    foreach ($subscription in $subscriptions) {
+        $subscriptionId = $subscription.Id
+        
+        # Skip if we don't have metadata or activity logs for this subscription
+        if (-not $subscriptionMetadata.ContainsKey($subscriptionId) -or -not $activityLogs.ContainsKey($subscriptionId)) {
+            Write-Log "Skipping subscription $subscriptionId - missing data" -Level 'WARNING' -Category 'CostEstimation'
+            continue
+        }
+        
+        $metadata = $subscriptionMetadata[$subscriptionId]
+        $logData = $activityLogs[$subscriptionId]
+        
+        # Determine if production environment
+        $isProduction = $metadata.IsProductionLike
+        
+        # Get business unit
+        $businessUnit = $metadata.BusinessUnit
+        
+        # Calculate cost estimate
+        $estimate = Get-SubscriptionCostEstimate -SubscriptionId $subscriptionId `
+                                                 -SubscriptionMetadata $metadata `
+                                                 -ActivityLogData $logData `
+                                                 -EntraIdData $entraIdMetrics `
+                                                 -Pricing $Pricing `
+                                                 -IsProductionEnvironment $isProduction `
+                                                 -BusinessUnit $businessUnit
+        
+        $estimates += $estimate
+        Write-Log "Calculated cost estimate for $($metadata.SubscriptionName): $($estimate.MonthlyCost)" -Level 'INFO' -Category 'CostEstimation'
+    }
+    
+    Write-Log "Completed cost estimates for $($estimates.Count) subscriptions" -Level 'SUCCESS' -Category 'CostEstimation'
+    return $estimates
 }
 
 # Function to aggregate cost estimates for business units
@@ -262,6 +327,7 @@ function Get-BusinessUnitCostSummary {
         }
         
         $buSummary[$bu].Subscriptions[$estimate.SubscriptionId] = @{
+            Name = $estimate.SubscriptionName
             MonthlyCost = $estimate.MonthlyCost
             IsProduction = $estimate.IsProduction
             EventsPerDay = $estimate.LogVolume.TotalEventsPerDay
@@ -286,8 +352,10 @@ function Get-BusinessUnitCostSummary {
         }
     }
     
+    Write-Log "Created cost summary for $($buSummary.Count) business units" -Level 'SUCCESS' -Category 'CostEstimation'
     return $buSummary
 }
 
 # Export functions
-Export-ModuleMember -Function Get-SizeBasedRequirements, Get-CostEstimates, Get-SubscriptionCostEstimate, Get-BusinessUnitCostSummary
+Export-ModuleMember -Function Get-SizeBasedRequirements, Get-CostEstimates, Get-SubscriptionCostEstimate, 
+                    Get-AllSubscriptionsCostEstimate, Get-BusinessUnitCostSummary
