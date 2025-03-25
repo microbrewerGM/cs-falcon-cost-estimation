@@ -79,8 +79,8 @@ param(
     [Parameter(Mandatory = $false)]
     [bool]$UseRealPricing = $true,
 
-    [Parameter(Mandatory = $false)]
-    [bool]$ParallelExecution = $true,
+[Parameter(Mandatory = $false)]
+[bool]$ParallelExecution = $false, # Disabled by default due to parameter passing issues
 
     [Parameter(Mandatory = $false)]
     [int]$MaxParallelJobs = 5,
