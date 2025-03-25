@@ -319,3 +319,46 @@ function generate_csv(results):
    - `--all-regions`: Analyze all enabled regions
    - `--include-dspm`: Include DSPM costs
    - `--include-snapshot`: Include Snapshot costs
+
+## Cross-Cloud Comparison with Azure
+
+### Similar Cost Factors
+
+| Feature | AWS Approach | Azure Approach |
+|---------|-------------|---------------|
+| **Event Processing** | EventBridge ($1.00 per million events) | Event Hub (TUs based on throughput) |
+| **Log Storage** | S3 Storage ($0.023 per GB) | Azure Storage ($0.018-0.02 per GB) |
+| **Compute** | Lambda for event processing | Function Apps (P0V3) |
+| **Regional Variation** | Data transfer costs vary by region | All resource costs vary by region |
+| **Business Unit Attribution** | Tag-based mapping | Same approach |
+
+### Key Differences
+
+1. **Architectural Approach**:
+   - **AWS**: Uses serverless architecture (EventBridge + Lambda) with minimal persistent resources
+   - **Azure**: Uses managed services (Event Hub + Functions) with auto-scaling but persistent resources
+
+2. **Cost Distribution**:
+   - **AWS**: Costs distributed more evenly across accounts with minimal management account overhead
+   - **Azure**: Most costs concentrated in default subscription with minimal costs in other subscriptions
+
+3. **Scaling Metrics**:
+   - **AWS**: Primarily scales based on event count from CloudTrail
+   - **Azure**: Scales based on data volume (MB/second) and events per second
+
+4. **Pricing Model**:
+   - **AWS**: Pay-as-you-go with minimal baseline costs
+   - **Azure**: Baseline costs for persistent resources with auto-scaling
+
+### Unified Cost Estimation Approach
+
+Both estimation scripts follow similar patterns:
+1. **Discover scope** (accounts/subscriptions)
+2. **Gather metrics** (event counts and volumes)
+3. **Calculate resource requirements**
+4. **Apply pricing**
+5. **Generate reports**
+
+The key differentiator is that AWS resources scale more granularly and have lower baseline costs, while Azure resources have higher baseline costs but include more capability in those baseline costs.
+
+For organizations using both cloud providers, the cost estimation outputs can be combined to provide a unified view of Cloud Security costs across the entire multi-cloud environment.
