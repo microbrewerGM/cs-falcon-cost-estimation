@@ -25,8 +25,16 @@ function Get-SubscriptionMetadata {
     Write-Log "Collecting metadata for $($Subscriptions.Count) subscriptions" -Level 'INFO' -Category 'Subscription'
     
     foreach ($subscription in $Subscriptions) {
+        # Skip subscriptions with empty or null IDs
+        if ([string]::IsNullOrWhiteSpace($subscription.Id)) {
+            Write-Log "Skipping subscription with empty ID" -Level 'WARNING' -Category 'Subscription'
+            continue
+        }
+        
         $subscriptionId = $subscription.Id
-        $subscriptionName = $subscription.Name
+        $subscriptionName = if ([string]::IsNullOrWhiteSpace($subscription.Name)) { "Unnamed-$subscriptionId" } else { $subscription.Name }
+        
+        Write-Log "Processing subscription ID: $subscriptionId, Name: $subscriptionName" -Level 'DEBUG' -Category 'Subscription'
         
         # Initialize metadata object
         $metadata = @{
