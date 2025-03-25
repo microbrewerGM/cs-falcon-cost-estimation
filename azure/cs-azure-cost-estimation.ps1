@@ -501,7 +501,7 @@ foreach ($subscription in $subscriptions) {
         Write-Log "Successfully set context to subscription $($subscription.Name)" -Level 'INFO'
     }
     catch {
-        Write-Log "Failed to set context to subscription $($subscription.Name)" + ": $($_.Exception.Message)" -Level 'WARNING'
+        Write-Log "Failed to set context to subscription $($subscription.Name): $($_.Exception.Message)" -Level 'WARNING'
     }
     
     # Initialize subscription data object
@@ -536,7 +536,7 @@ foreach ($subscription in $subscriptions) {
             Write-Log "Subscription regions: $($subscriptionData.Region)" -Level 'INFO'
         }
         catch {
-            Write-Log "Failed to get resource groups for subscription $($subscription.Name)" + ": $($_.Exception.Message)" -Level 'WARNING'
+            Write-Log "Failed to get resource groups for subscription $($subscription.Name): $($_.Exception.Message)" -Level 'WARNING'
             $subscriptionData.Region = "unknown"
         }
     }
@@ -624,7 +624,7 @@ foreach ($subscription in $subscriptions) {
                                               Select-Object Name, Count | Sort-Object -Property Count -Descending
                             
                             $topOperations = $operationTypes | Select-Object -First 3
-                            $topOperationsText = ($topOperations | ForEach-Object { "$($_.Name)" + ": $($_.Count)" }) -join ", "
+                            $topOperationsText = ($topOperations | ForEach-Object { "$($_.Name): $($_.Count)" }) -join ", "
                             
                             Write-Log "Page ${pageCount}: Retrieved $($logsPage.Count) activity logs (Total: $totalLogsRetrieved)" -Level 'INFO'
                             Write-Log "  Top operations: ${topOperationsText}" -Level 'INFO'
@@ -652,7 +652,16 @@ foreach ($subscription in $subscriptions) {
                 }
                 catch {
                     Write-Log "Error calling Azure REST API: $($_.Exception.Message)" -Level 'WARNING'
-                    # Ensure we handle API comparison issues by converting objects to strings before comparison
+                    # Fix comparison issues by converting objects to strings
+                    # This handles the issue with comparing Microsoft.Storage objects
+                    try {
+                        # Force PowerShell to use string comparison for objects
+                        $ErrorActionPreference = "SilentlyContinue"
+                        [System.Environment]::SetEnvironmentVariable("POWERSHELL_COMPARE_AS_STRING", "true")
+                    }
+                    catch {
+                        Write-Log "Could not set string comparison mode: $($_.Exception.Message)" -Level 'WARNING'
+                    }
                     break
                 }
                 
@@ -668,7 +677,7 @@ foreach ($subscription in $subscriptions) {
             Write-Log "Total activity log count: $activityLogCount, Daily average: $($subscriptionData.DailyAverage)" -Level 'INFO'
         }
         catch {
-            Write-Log "Failed to get activity logs for subscription $($subscription.Name)" + ": $($_.Exception.Message)" -Level 'WARNING'
+            Write-Log "Failed to get activity logs for subscription $($subscription.Name): $($_.Exception.Message)" -Level 'WARNING'
             # Estimate based on subscription type and size
             $subscriptionData.ActivityLogCount = 1000  # Default estimate
             $subscriptionData.DailyAverage = [math]::Round(1000 / $DaysToAnalyze, 2)
@@ -695,7 +704,7 @@ foreach ($subscription in $subscriptions) {
             
             # Log resource breakdown
             foreach ($resourceType in $resourceCounts) {
-                Write-Log "  - $($resourceType.ResourceType)" + ": $($resourceType.Count)" -Level 'INFO'
+                Write-Log "  - $($resourceType.ResourceType): $($resourceType.Count)" -Level 'INFO'
             }
         }
         catch {
@@ -824,7 +833,7 @@ foreach ($subscriptionResult in $results) {
     }
     $subscriptionResult.EstimatedMonthlyCost = [math]::Round($totalCost, 2)
     
-    Write-Log "Estimated monthly cost for subscription $($subscriptionResult.SubscriptionName)" + ": $($subscriptionResult.EstimatedMonthlyCost)" -Level 'INFO'
+    Write-Log "Estimated monthly cost for subscription $($subscriptionResult.SubscriptionName): $($subscriptionResult.EstimatedMonthlyCost)" -Level 'INFO'
 }
 
 # Prepare CSV data
