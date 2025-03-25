@@ -15,14 +15,21 @@ CS-Azure-Cost-Estimation-v2/
 │   ├── Capacity.ps1                           # Throughput and storage settings
 │   ├── Environments.ps1                       # Environment classification
 │   └── Reporting.ps1                          # Reporting settings
-└── Modules/                                   # Modular components
-    ├── ConfigLoader.psm1                      # Loads configuration settings
-    ├── Logging.psm1                           # Logging functionality
-    ├── Authentication.psm1                    # Azure authentication
-    ├── Pricing.psm1                           # Pricing retrieval
-    ├── DataCollection.psm1                    # Azure resource data collection
-    ├── CostEstimation.psm1                    # Cost calculation logic
-    └── Reporting.psm1                         # Report generation
+├── Modules/                                   # Modular components
+│   ├── ConfigLoader.psm1                      # Loads configuration settings
+│   ├── Logging.psm1                           # Logging functionality
+│   ├── Authentication.psm1                    # Azure authentication
+│   ├── Pricing.psm1                           # Pricing retrieval
+│   ├── DataCollection.psm1                    # Azure resource data collection
+│   ├── CostEstimation.psm1                    # Cost calculation logic
+│   ├── ProcessSubscription.psm1               # Subscription processing for parallel jobs
+│   └── Reporting.psm1                         # Report generation
+├── Tests/                                     # Testing tools
+│   ├── Test-ScriptSyntax.ps1                  # PowerShell syntax validation
+│   └── Test-BacktickAlignment.ps1             # Backtick alignment validation
+└── Tools/                                     # Developer tools
+    ├── Install-GitHooks.ps1                   # Git hooks installer
+    └── pre-commit                             # Git pre-commit hook
 ```
 
 ## How the Modules Work Together
@@ -118,3 +125,51 @@ Example using a custom config:
 ```powershell
 .\CS-Azure-Cost-Estimation-v2-Main.ps1 -CustomConfigPath "C:\Company\CrowdStrike\custom-config.ps1"
 ```
+
+## Testing and Development Tools
+
+### Syntax and Runtime Error Prevention
+
+The project includes several tools to ensure code quality and prevent runtime errors:
+
+#### 1. PowerShell Syntax Validation
+The `Test-ScriptSyntax.ps1` script checks for PowerShell syntax errors in scripts and modules.
+This catches basic coding errors before they get committed.
+
+#### 2. Backtick Alignment Validation
+The `Test-BacktickAlignment.ps1` script analyzes PowerShell files to detect misaligned backticks
+which can cause the "Variable reference is not valid" runtime error. 
+
+This error occurs when backticks (`) used for line continuation aren't properly aligned with the 
+following line's parameters. For example, this will cause an error:
+
+```powershell
+# INCORRECT - misaligned backticks
+$result = Get-Something -Parameter1 Value1 `
+-Parameter2 Value2    # Error occurs here because of poor alignment
+```
+
+The correct approach is:
+
+```powershell
+# CORRECT - properly aligned backticks
+$result = Get-Something -Parameter1 Value1 `
+                        -Parameter2 Value2
+```
+
+The validation tool detects these issues before they become runtime errors.
+
+### Git Hooks
+
+To automatically enforce code quality standards, the project includes Git hooks:
+
+1. Run `.\Tools\Install-GitHooks.ps1` to set up the pre-commit hooks
+2. The hooks will check syntax and backtick alignment before allowing commits
+3. This prevents problematic code from entering the repository
+
+Pre-commit validation ensures that:
+- No PowerShell syntax errors are committed
+- No backtick alignment issues that would cause runtime errors are committed
+- All code meets quality standards
+
+These tools are especially valuable when multiple team members are contributing to the codebase.

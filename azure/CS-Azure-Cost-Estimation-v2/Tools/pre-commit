@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# Pre-commit hook to check PowerShell files for backtick alignment issues
+# This prevents "Variable reference is not valid" runtime errors
+
+# Get the list of PowerShell files that are staged for commit
+powershell_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ps1|psm1)$')
+
+if [ -z "$powershell_files" ]; then
+    # No PowerShell files to check
+    exit 0
+fi
+
+# Path to the backtick alignment test script
+script_path="azure/CS-Azure-Cost-Estimation-v2/Tests/Test-BacktickAlignment.ps1"
+repo_root=$(git rev-parse --show-toplevel)
+full_script_path="$repo_root/$script_path"
+
+if [ ! -f "$full_script_path" ]; then
+    echo "Error: Backtick alignment test script not found at $full_script_path"
+    exit 1
+fi
+
+# Check each PowerShell file
+errors=0
+for file in $powershell_files; do
+    echo "Checking $file for backtick alignment issues..."
+    
+    # Run the test script on the file
+    pwsh -Command "& '$full_script_path' -Path '$repo_root/$file'" > /dev/null
+    
+    if [ $? -ne 0 ]; then
+        # If the test failed, show the output with error details
+        echo "❌ Backtick alignment issues found in $file:"
+        pwsh -Command "& '$full_script_path' -Path '$repo_root/$file'"
+        errors=1
+    else
+        echo "✅ $file passed backtick alignment check"
+    fi
+done
+
+if [ $errors -ne 0 ]; then
+    echo ""
+    echo "❌ Commit rejected: Please fix the backtick alignment issues and try again."
+    echo "   This prevents 'Variable reference is not valid' runtime errors."
+    exit 1
+fi
+
+echo ""
+echo "✅ All PowerShell files passed backtick alignment check."
+exit 0
