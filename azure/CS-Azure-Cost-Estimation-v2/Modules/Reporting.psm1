@@ -194,97 +194,37 @@ function New-HtmlReport {
         }
     }
     
-    # Generate the HTML
-    $chartScripts = ""
+    # Get the script directory to reference the WebResources folder
+    $scriptPath = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    $webResourcesPath = Join-Path $scriptPath "WebResources"
+    
+    # Create a WebResources directory in the output directory location
+    $reportDir = Split-Path -Parent $OutputFilePath
+    $outputWebResourcesPath = Join-Path $reportDir "WebResources"
+    
+    # Create the output WebResources directory if it doesn't exist
+    if (-not (Test-Path $outputWebResourcesPath)) {
+        New-Item -Path $outputWebResourcesPath -ItemType Directory -Force | Out-Null
+    }
+    
+    # Copy the CSS and JS files to the output directory
+    $cssSourcePath = Join-Path $webResourcesPath "report.css"
+    $cssDestPath = Join-Path $outputWebResourcesPath "report.css"
+    Copy-Item -Path $cssSourcePath -Destination $cssDestPath -Force
+    
+    $jsSourcePath = Join-Path $webResourcesPath "report.js"
+    $jsDestPath = Join-Path $outputWebResourcesPath "report.js"
+    Copy-Item -Path $jsSourcePath -Destination $jsDestPath -Force
+    
+    # Generate chart data as JavaScript variables
+    $chartDataScript = ""
     if ($IncludeCharts) {
-        # Include Chart.js scripts
-        $chartScripts = @"
-<script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
+        $chartDataScript = @"
 <script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Business Unit Chart
-    const buChartData = $($buChartData | ConvertTo-Json);
-    const componentChartData = $($componentChartData | ConvertTo-Json);
-    const envChartData = $($envChartData | ConvertTo-Json);
-    
-    // Business Unit Pie Chart
-    const buCtx = document.getElementById('businessUnitChart').getContext('2d');
-    new Chart(buCtx, {
-        type: 'pie',
-        data: {
-            labels: buChartData.map(item => item.name),
-            datasets: [{
-                data: buChartData.map(item => item.value),
-                backgroundColor: buChartData.map(item => item.color),
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: {
-                    position: 'right',
-                },
-                title: {
-                    display: true,
-                    text: 'Cost by Business Unit'
-                }
-            }
-        }
-    });
-    
-    // Component Pie Chart
-    const componentCtx = document.getElementById('componentChart').getContext('2d');
-    new Chart(componentCtx, {
-        type: 'pie',
-        data: {
-            labels: componentChartData.map(item => item.name),
-            datasets: [{
-                data: componentChartData.map(item => item.value),
-                backgroundColor: componentChartData.map(item => item.color),
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: {
-                    position: 'right',
-                },
-                title: {
-                    display: true,
-                    text: 'Cost by Component'
-                }
-            }
-        }
-    });
-    
-    // Environment Pie Chart
-    const envCtx = document.getElementById('environmentChart').getContext('2d');
-    new Chart(envCtx, {
-        type: 'pie',
-        data: {
-            labels: envChartData.map(item => item.name),
-            datasets: [{
-                data: envChartData.map(item => item.value),
-                backgroundColor: envChartData.map(item => item.color),
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: {
-                    position: 'right',
-                },
-                title: {
-                    display: true,
-                    text: 'Cost by Environment'
-                }
-            }
-        }
-    });
-});
+    // Chart data as global variables
+    window.buChartData = $($buChartData | ConvertTo-Json);
+    window.componentChartData = $($componentChartData | ConvertTo-Json);
+    window.envChartData = $($envChartData | ConvertTo-Json);
 </script>
 "@
     }
@@ -296,79 +236,10 @@ document.addEventListener('DOMContentLoaded', function() {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>$ReportTitle</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .header {
-            text-align: center;
-            margin-bottom: 30px;
-            border-bottom: 1px solid #ddd;
-            padding-bottom: 10px;
-        }
-        .summary-box {
-            display: inline-block;
-            width: 22%;
-            margin: 0 1%;
-            padding: 15px;
-            background-color: #f8f9fa;
-            border-radius: 5px;
-            text-align: center;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .summary-box h3 {
-            margin-top: 0;
-            color: #666;
-            font-size: 14px;
-            text-transform: uppercase;
-        }
-        .summary-box p {
-            margin-bottom: 0;
-            font-size: 24px;
-            font-weight: bold;
-            color: #0066cc;
-        }
-        .section {
-            margin-bottom: 40px;
-        }
-        .chart-container {
-            width: 32%;
-            height: 300px;
-            display: inline-block;
-            margin-right: 1%;
-            vertical-align: top;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 20px;
-        }
-        th, td {
-            padding: 10px;
-            border: 1px solid #ddd;
-            text-align: left;
-        }
-        th {
-            background-color: #f2f2f2;
-            font-weight: bold;
-        }
-        tr:nth-child(even) {
-            background-color: #f8f9fa;
-        }
-        .footnote {
-            font-size: 12px;
-            color: #666;
-            margin-top: 40px;
-            border-top: 1px solid #ddd;
-            padding-top: 10px;
-        }
-    </style>
-    $chartScripts
+    <link rel="stylesheet" href="WebResources/report.css">
+    $(if ($IncludeCharts) { '<script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>' })
+    $chartDataScript
+    $(if ($IncludeCharts) { '<script src="WebResources/report.js"></script>' })
 </head>
 <body>
     <div class="header">
