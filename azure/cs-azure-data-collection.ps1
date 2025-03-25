@@ -86,12 +86,14 @@ function Get-ActivityLogMetrics {
             }
             
             if ($pageNumber -eq 1) {
-                # First page
-                $response = Get-AzActivityLog -StartTime $startTime -EndTime $endTime -MaxRecord $maxRecordsPerPage
+                # First page - use MaxRecords instead of MaxRecord (although they are aliases)
+                # Do not use DetailedOutput parameter as it's been deprecated
+                $response = Get-AzActivityLog -StartTime $startTime -EndTime $endTime -MaxRecords $maxRecordsPerPage
             }
             else {
                 # Subsequent pages with continuation token
-                $response = Get-AzActivityLog -StartTime $startTime -EndTime $endTime -MaxRecord $maxRecordsPerPage -ContinuationToken $continuationToken
+                # Do not use DetailedOutput parameter as it's been deprecated
+                $response = Get-AzActivityLog -StartTime $startTime -EndTime $endTime -MaxRecords $maxRecordsPerPage -ContinuationToken $continuationToken
             }
             
             # Add results to our collection
