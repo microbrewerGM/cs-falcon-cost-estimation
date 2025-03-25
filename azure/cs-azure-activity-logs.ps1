@@ -222,5 +222,5 @@ function Get-AllActivityLogsWithChunking {
     return $allLogs
 }
 
-# Export the function for dot-sourcing
-Export-ModuleMember -Function Get-AllActivityLogsWithChunking
+# Function is exposed through dot-sourcing the script
+# No Export-ModuleMember needed since this isn't a formal PowerShell module (.psm1)
