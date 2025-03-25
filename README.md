@@ -13,7 +13,7 @@ This tool provides accurate cost estimates for deploying CrowdStrike Falcon Clou
 - **Deployment Optimization**: Identifies ideal placement of CrowdStrike resources
 - **High-Fidelity Estimates**: Uses real activity patterns, not generic assumptions
 
-## Cost Summary Dashboard
+## Example Demo Cost Summary Dashboard
 
 Our analysis of example enterprise data shows:
 

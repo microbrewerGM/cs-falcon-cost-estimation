@@ -201,7 +201,7 @@ The CrowdStrike Azure Cost Estimation tool accurately models costs by mapping re
 
 ## Appendix: Enhanced Cost Estimation Approach (v2)
 
-The enhanced version of the Azure Cost Estimation Tool (v2) implements several improvements to increase accuracy, support multi-entity reporting, and optimize for large environments.
+The enhanced version of the Azure Cost Estimation Tool (v2) implements several improvements to increase accuracy, support multi-entity reporting, and optimize for large environments. This enhanced version is implemented in the `CS-Azure-Cost-Estimation-v2` directory with a modular architecture and is accessible via the `cs-azure-cost-estimation-v2-launcher.ps1` script.
 
 ### 0. Centralized Organizational Configuration
 
