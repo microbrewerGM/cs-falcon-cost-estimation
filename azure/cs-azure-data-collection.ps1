@@ -72,61 +72,21 @@ function Get-ActivityLogMetrics {
         }
         Write-Progress @progressParams
         
-        # Using Get-AzActivityLog with paging to handle large result sets
-        $allActivityLogs = @()
-        $pageNumber = 1
-        $maxRecordsPerPage = 1000  # Maximum allowed by the API
-        $hasMoreRecords = $true
+        # Retrieve Activity Logs with proper progress indication
+        # MaxRecord parameter is valid but there's no ContinuationToken parameter
+        # Instead, we'll use a single call with MaxRecord set to the maximum value
+        Write-Progress @progressParams -Status "Retrieving logs for subscription: $($currentContext.Subscription.Name)" -PercentComplete 50
         
-        while ($hasMoreRecords) {
-            Write-Progress @progressParams -Status "Retrieving page $pageNumber for subscription: $($currentContext.Subscription.Name)" -PercentComplete ((($pageNumber - 1) % 10) * 10)
-            
-            if ($OutputDir) {
-                Write-LogEntry -Message "Retrieving Activity Log page $pageNumber for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
-            }
-            
-            if ($pageNumber -eq 1) {
-                # First page - use MaxRecords instead of MaxRecord (although they are aliases)
-                # Do not use DetailedOutput parameter as it's been deprecated
-                $response = Get-AzActivityLog -StartTime $startTime -EndTime $endTime -MaxRecords $maxRecordsPerPage
-            }
-            else {
-                # Subsequent pages with continuation token
-                # Do not use DetailedOutput parameter as it's been deprecated
-                $response = Get-AzActivityLog -StartTime $startTime -EndTime $endTime -MaxRecords $maxRecordsPerPage -ContinuationToken $continuationToken
-            }
-            
-            # Add results to our collection
-            $allActivityLogs += $response
-            
-            # Check for continuation token to see if there are more pages
-            if ($response.PSAzureOperationResponse -and 
-                $response.PSAzureOperationResponse.ContinuationToken) {
-                $continuationToken = $response.PSAzureOperationResponse.ContinuationToken
-                $hasMoreRecords = $true
-                $pageNumber++
-                
-                # Log progress for large result sets
-                if ($OutputDir) {
-                    Write-LogEntry -Message "Retrieved $($response.Count) records from page $($pageNumber-1). More records exist." -OutputDir $OutputDir
-                }
-                
-                Write-Host "Retrieved $($response.Count) log entries from page $($pageNumber-1). Continuing to next page..." -ForegroundColor Cyan
-            }
-            else {
-                $hasMoreRecords = $false
-                
-                if ($pageNumber -gt 1) {
-                    Write-Host "Retrieved $($response.Count) log entries from final page $($pageNumber). No more records exist." -ForegroundColor Cyan
-                }
-            }
+        if ($OutputDir) {
+            Write-LogEntry -Message "Retrieving Activity Logs for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
         }
         
-        # Assign the collected logs
-        $activityLogs = $allActivityLogs
+        # Use MaxRecord parameter to get up to 1000 records (maximum allowed by the API)
+        # Explicitly avoid using the DetailedOutput parameter (deprecated)
+        $activityLogs = Get-AzActivityLog -StartTime $startTime -EndTime $endTime -MaxRecord 1000
         
         Write-Progress @progressParams -PercentComplete 100 -Completed
-        Write-Host "Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries across $pageNumber page(s)." -ForegroundColor Green
+        Write-Host "Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries." -ForegroundColor Green
         
         # Write to log file if OutputDir is provided
         if ($OutputDir) {
