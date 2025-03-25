@@ -662,7 +662,7 @@ foreach ($subscription in $subscriptions) {
             $subscriptionData.ActivityLogCount = $activityLogCount
             
             # Calculate daily average
-            $subscriptionData.DailyAverage = [math]::Round($activityLogCount /, $DaysToAnalyze, 2)
+            $subscriptionData.DailyAverage = [math]::Round($activityLogCount / $DaysToAnalyze, 2)
             
             Write-Log "Total activity log count: $activityLogCount, Daily average: $($subscriptionData.DailyAverage)" -Level 'INFO'
         }
@@ -670,13 +670,13 @@ foreach ($subscription in $subscriptions) {
             Write-Log "Failed to get activity logs for subscription $($subscription.Name)" + ": $($_.Exception.Message)" -Level 'WARNING'
             # Estimate based on subscription type and size
             $subscriptionData.ActivityLogCount = 1000  # Default estimate
-            $subscriptionData.DailyAverage = [math]::Round(1000 /, $DaysToAnalyze, 2)
+            $subscriptionData.DailyAverage = [math]::Round(1000 / $DaysToAnalyze, 2)
         }
     }
     else {
         # Estimate since we couldn't set context
         $subscriptionData.ActivityLogCount = 1000  # Default estimate
-        $subscriptionData.DailyAverage = [math]::Round(1000 /, $DaysToAnalyze, 2)
+        $subscriptionData.DailyAverage = [math]::Round(1000 / $DaysToAnalyze, 2)
         Write-Log "Using estimated activity log count of 1000 for subscription $($subscription.Name)" -Level 'WARNING'
     }
     
@@ -732,8 +732,8 @@ $endTime = Get-Date
 $tenantMetrics = @{
     SignInLogCount = 10000  # Default estimate
     AuditLogCount = 5000    # Default estimate
-    SignInDailyAverage = [math]::Round(10000 /, $DaysToAnalyze, 2)
-    AuditDailyAverage = [math]::Round(5000 /, $DaysToAnalyze, 2)
+    SignInDailyAverage = [math]::Round(10000 / $DaysToAnalyze, 2)
+    AuditDailyAverage = [math]::Round(5000 / $DaysToAnalyze, 2)
 }
 
 # Try to get actual metrics if we have permissions
@@ -752,8 +752,8 @@ try {
     
     $tenantMetrics.SignInLogCount = $signInEstimate
     $tenantMetrics.AuditLogCount = $auditEstimate
-    $tenantMetrics.SignInDailyAverage = [math]::Round($signInEstimate /, $DaysToAnalyze, 2)
-    $tenantMetrics.AuditDailyAverage = [math]::Round($auditEstimate /, $DaysToAnalyze, 2)
+    $tenantMetrics.SignInDailyAverage = [math]::Round($signInEstimate / $DaysToAnalyze, 2)
+    $tenantMetrics.AuditDailyAverage = [math]::Round($auditEstimate / $DaysToAnalyze, 2)
     
     Write-Log "Estimated sign-in logs: $signInEstimate, Daily average: $($tenantMetrics.SignInDailyAverage)" -Level 'INFO'
     Write-Log "Estimated audit logs: $auditEstimate, Daily average: $($tenantMetrics.AuditDailyAverage)" -Level 'INFO'
