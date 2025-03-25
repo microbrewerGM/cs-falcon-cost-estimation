@@ -72,11 +72,59 @@ function Get-ActivityLogMetrics {
         }
         Write-Progress @progressParams
         
-        # Using Get-AzActivityLog instead of deprecated Get-AzLog
-        $activityLogs = Get-AzActivityLog -StartTime $startTime -EndTime $endTime
+        # Using Get-AzActivityLog with paging to handle large result sets
+        $allActivityLogs = @()
+        $pageNumber = 1
+        $maxRecordsPerPage = 1000  # Maximum allowed by the API
+        $hasMoreRecords = $true
+        
+        while ($hasMoreRecords) {
+            Write-Progress @progressParams -Status "Retrieving page $pageNumber for subscription: $($currentContext.Subscription.Name)" -PercentComplete ((($pageNumber - 1) % 10) * 10)
+            
+            if ($OutputDir) {
+                Write-LogEntry -Message "Retrieving Activity Log page $pageNumber for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
+            }
+            
+            if ($pageNumber -eq 1) {
+                # First page
+                $response = Get-AzActivityLog -StartTime $startTime -EndTime $endTime -MaxRecord $maxRecordsPerPage
+            }
+            else {
+                # Subsequent pages with continuation token
+                $response = Get-AzActivityLog -StartTime $startTime -EndTime $endTime -MaxRecord $maxRecordsPerPage -ContinuationToken $continuationToken
+            }
+            
+            # Add results to our collection
+            $allActivityLogs += $response
+            
+            # Check for continuation token to see if there are more pages
+            if ($response.PSAzureOperationResponse -and 
+                $response.PSAzureOperationResponse.ContinuationToken) {
+                $continuationToken = $response.PSAzureOperationResponse.ContinuationToken
+                $hasMoreRecords = $true
+                $pageNumber++
+                
+                # Log progress for large result sets
+                if ($OutputDir) {
+                    Write-LogEntry -Message "Retrieved $($response.Count) records from page $($pageNumber-1). More records exist." -OutputDir $OutputDir
+                }
+                
+                Write-Host "Retrieved $($response.Count) log entries from page $($pageNumber-1). Continuing to next page..." -ForegroundColor Cyan
+            }
+            else {
+                $hasMoreRecords = $false
+                
+                if ($pageNumber -gt 1) {
+                    Write-Host "Retrieved $($response.Count) log entries from final page $($pageNumber). No more records exist." -ForegroundColor Cyan
+                }
+            }
+        }
+        
+        # Assign the collected logs
+        $activityLogs = $allActivityLogs
         
         Write-Progress @progressParams -PercentComplete 100 -Completed
-        Write-Host "Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries." -ForegroundColor Green
+        Write-Host "Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries across $pageNumber page(s)." -ForegroundColor Green
         
         # Write to log file if OutputDir is provided
         if ($OutputDir) {
