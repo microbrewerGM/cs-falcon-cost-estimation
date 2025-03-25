@@ -28,7 +28,7 @@ param (
     [switch]$Quiet = $false,
     
     [Parameter(Mandatory = $false)]
-    [switch]$Debug = $false
+    [switch]$DebugMode = $false
 )
 
 # Script Settings
@@ -52,13 +52,13 @@ $modules = @(
 )
 
 # Silence module import messages (unless debugging)
-$VerbosePreference = if ($Debug) { 'Continue' } else { 'SilentlyContinue' }
+$VerbosePreference = if ($DebugMode) { 'Continue' } else { 'SilentlyContinue' }
 
 Write-Host "Loading modules..." -ForegroundColor Cyan
 foreach ($module in $modules) {
     $modulePath = Join-Path $script:ModulesPath "$module.psm1"
     if (Test-Path $modulePath) {
-        Import-Module $modulePath -Force -Verbose:$Debug
+        Import-Module $modulePath -Force -Verbose:$DebugMode
     }
     else {
         Write-Host "Error: Module $module not found at $modulePath" -ForegroundColor Red
@@ -69,7 +69,7 @@ Write-Host "All modules loaded successfully" -ForegroundColor Green
 
 function Start-CostEstimation {
     # Set minimum log level based on parameters
-    if ($Debug) {
+    if ($DebugMode) {
         Set-MinimumLogLevel -Level 'DEBUG'
     }
     elseif ($Quiet) {
