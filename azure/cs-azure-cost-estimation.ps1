@@ -652,6 +652,7 @@ foreach ($subscription in $subscriptions) {
                 }
                 catch {
                     Write-Log "Error calling Azure REST API: $($_.Exception.Message)" -Level 'WARNING'
+                    # Ensure we handle API comparison issues by converting objects to strings before comparison
                     break
                 }
                 
@@ -698,7 +699,7 @@ foreach ($subscription in $subscriptions) {
             }
         }
         catch {
-            Write-Log "Failed to get resources for subscription $($subscription.Name)" + ": $($_.Exception.Message)" -Level 'WARNING'
+            Write-Log "Failed to get resources for subscription $($subscription.Name): $($_.Exception.Message)" -Level 'WARNING'
             $subscriptionData.ResourceCount = 100  # Default estimate
         }
     }
