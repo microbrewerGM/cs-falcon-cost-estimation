@@ -3,6 +3,27 @@
 # Add System.Web for URL encoding
 Add-Type -AssemblyName System.Web
 
+# ====================================================================
+# !!!          IMPORTANT MAINTAINER NOTES AND WARNINGS            !!!
+# ====================================================================
+# 1. DO NOT USE THE DETAILEDOUTPUT PARAMETER with Get-AzActivityLog
+#    This parameter is deprecated and causes warnings.
+#
+# 2. PAGINATION LIMITATION AWARENESS
+#    The current implementation only retrieves up to 1000 logs per
+#    subscription due to API limitations. This is clearly communicated
+#    to users in the console output.
+#
+# 3. REST API PAGINATION
+#    Do not implement custom REST API pagination without thorough testing.
+#    Previous attempts have resulted in 404 errors due to various issues
+#    with the REST API endpoints.
+#
+# 4. PENDING FUTURE IMPROVEMENTS
+#    We've preserved comment blocks for future pagination implementation
+#    to be tackled as a separate, well-tested enhancement.
+# ====================================================================
+
 <#
 .SYNOPSIS
     Azure data collection module for cost estimation.
@@ -127,7 +148,15 @@ function Get-ActivityLogMetrics {
                     # For first page, use standard Get-AzActivityLog cmdlet
                     Write-Host "${subCountPrefix}Using Get-AzActivityLog for initial page" -ForegroundColor DarkGray
                     
-                    # Get first 1000 logs using the built-in cmdlet
+                    # IMPORTANT: DO NOT ADD DetailedOutput PARAMETER HERE!
+                    # The DetailedOutput parameter has been deprecated and causes warnings.
+                    # Only use the following parameters: StartTime, EndTime, MaxRecord
+                    # MaxRecord=1000 is the maximum allowed by the API and cannot be increased.
+                    #
+                    # !!! MAINTAINER WARNING !!!
+                    # DO NOT MODIFY THIS CALL TO ADD THE DETAILED OUTPUT PARAMETER!
+                    # DO NOT ATTEMPT TO IMPLEMENT CUSTOM PAGINATION WITH REST API UNTIL PROPERLY TESTED!
+                    # Current approach: Get first 1000 logs only. Pagination support needs proper REST API testing.
                     $response = Get-AzActivityLog -StartTime $startTime -EndTime $endTime -MaxRecord 1000
                     
                     # Process the response directly
@@ -143,13 +172,14 @@ function Get-ActivityLogMetrics {
                     
                     # Check if we have a complete result or need paging
                     if ($logsPage.Count -eq 1000) {
-                        Write-Host "${subCountPrefix}Retrieved maximum records, checking for more..." -ForegroundColor Yellow
+                        Write-Host "${subCountPrefix}Retrieved maximum records (1000), which is the API limit." -ForegroundColor Yellow
                         
-                        # Stop here since we can't reliably get next pages without the proper API
-                        # In the future, implement NextLink extraction when available
-                        Write-Host "${subCountPrefix}NOTE: Pagination support is limited. Only the first 1000 logs will be retrieved." -ForegroundColor Yellow
+                        # Stop here since we can't reliably get next pages without the proper API implementation
+                        # Future enhancement: Implement proper REST API pagination that's been thoroughly tested
+                        Write-Host "${subCountPrefix}⚠️ LIMITATION: Only the first 1000 logs will be retrieved per subscription." -ForegroundColor Yellow
+                        Write-Host "${subCountPrefix}This is an Azure API limitation that cannot be bypassed with the current implementation." -ForegroundColor Yellow
                         if ($OutputDir) {
-                            Write-LogEntry -Message "${subCountPrefix}Pagination support is limited. Only the first 1000 logs will be retrieved." -Level "WARNING" -OutputDir $OutputDir
+                            Write-LogEntry -Message "${subCountPrefix}LIMITATION: Only the first 1000 logs will be retrieved per subscription (Azure API limit)." -Level "WARNING" -OutputDir $OutputDir
                         }
                         
                         # Set to null to break the loop after first page
@@ -165,6 +195,13 @@ function Get-ActivityLogMetrics {
                 # For REST API responses (future implementation), we would process differently
                 # This section is preserved for future implementation of proper paging
                 # Currently, we only process the logs from Get-AzActivityLog 
+                #
+                # TODO: Future pagination implementation notes
+                # 1. Test thoroughly with various subscriptions and log volumes
+                # 2. Use proper URI construction with System.Web.HttpUtility.UrlEncode
+                # 3. Use Invoke-AzRestMethod with full URL rather than Path
+                # 4. Properly extract and use skipToken from nextLink
+                # 5. Handle errors gracefully with clear messages
             }
             catch {
                 Write-Warning "${subCountPrefix}Error calling Azure REST API for activity logs: $($_.Exception.Message)"
