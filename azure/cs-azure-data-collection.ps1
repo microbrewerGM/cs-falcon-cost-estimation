@@ -38,7 +38,13 @@ function Get-ActivityLogMetrics {
         [int]$SampleDays = 7,
         
         [Parameter(Mandatory = $false)]
-        [string]$OutputDir = $null
+        [string]$OutputDir = $null,
+        
+        [Parameter(Mandatory = $false)]
+        [int]$CurrentSubscriptionNumber = 0,
+        
+        [Parameter(Mandatory = $false)]
+        [int]$TotalSubscriptions = 0
     )
     
     $currentContext = $null
@@ -54,30 +60,42 @@ function Get-ActivityLogMetrics {
         $endTime = Get-Date
         $startTime = $endTime.AddDays(-$SampleDays)
         
-        Write-Host "Collecting Activity Log metrics for subscription: $($currentContext.Subscription.Name)" -ForegroundColor Cyan
+        # Build a prefix for status messages if we have subscription count info
+        $subCountPrefix = ""
+        if ($CurrentSubscriptionNumber -gt 0 -and $TotalSubscriptions -gt 0) {
+            $subCountPrefix = "[$CurrentSubscriptionNumber/$TotalSubscriptions] "
+        }
+        
+        Write-Host "${subCountPrefix}Collecting Activity Log metrics for subscription: $($currentContext.Subscription.Name)" -ForegroundColor Cyan
         Write-Host "Time range: $startTime to $endTime" -ForegroundColor DarkGray
         
         # Retrieve Activity Logs for the time period with detailed status updates
-        Write-Host "Starting Activity Log query for subscription: $($currentContext.Subscription.Name) (this may take some time)..." -ForegroundColor Cyan
+        Write-Host "${subCountPrefix}Starting Activity Log query for subscription: $($currentContext.Subscription.Name) (this may take some time)..." -ForegroundColor Cyan
         
         # Write to log file if OutputDir is provided
         if ($OutputDir) {
-            Write-LogEntry -Message "Starting Activity Log query for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
+            Write-LogEntry -Message "${subCountPrefix}Starting Activity Log query for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
+        }
+        
+        # Set up activity name to include subscription count if available
+        $activityName = "Retrieving Activity Logs"
+        if ($CurrentSubscriptionNumber -gt 0 -and $TotalSubscriptions -gt 0) {
+            $activityName = "Retrieving Activity Logs (Subscription $CurrentSubscriptionNumber of $TotalSubscriptions)"
         }
         
         # Show progress indicator while querying
         $progressParams = @{
-            Activity = "Retrieving Activity Logs" 
+            Activity = $activityName
             Status = "Querying logs for subscription: $($currentContext.Subscription.Name)"
             PercentComplete = 10
         }
         Write-Progress @progressParams
         
         # Retrieve Activity Logs with proper pagination to handle more than 1000 results
-        Write-Progress @progressParams -Status "Retrieving initial logs for subscription: $($currentContext.Subscription.Name)" -PercentComplete 20
+        Write-Progress @progressParams -Status "${subCountPrefix}Retrieving initial logs for subscription: $($currentContext.Subscription.Name)" -PercentComplete 20
         
         if ($OutputDir) {
-            Write-LogEntry -Message "Starting paginated Activity Log retrieval for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
+            Write-LogEntry -Message "${subCountPrefix}Starting paginated Activity Log retrieval for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
         }
         
         # Use REST API with pagination since Get-AzActivityLog doesn't support continuation tokens
@@ -91,15 +109,16 @@ function Get-ActivityLogMetrics {
             $pageCount++
             
             # Update progress
-            Write-Progress @progressParams -Status "Retrieving page $pageCount for subscription: $($currentContext.Subscription.Name)" -PercentComplete (20 + ($pageCount * 5) % 70)
+            Write-Progress @progressParams -Status "${subCountPrefix}Retrieving page $pageCount for subscription: $($currentContext.Subscription.Name)" -PercentComplete (20 + ($pageCount * 5) % 70)
             
             if ($OutputDir) {
-                Write-LogEntry -Message "Retrieving Activity Log page $pageCount for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
+                Write-LogEntry -Message "${subCountPrefix}Retrieving Activity Log page $pageCount for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
             }
             
-            # Build the request URL with proper paging
+            # Build the request URL with proper paging and maximum page size
             $apiVersion = "2017-03-01-preview"
-            $requestURI = "/subscriptions/$SubscriptionId/providers/Microsoft.Insights/eventtypes/management/values?api-version=$apiVersion&`$filter=$filter"
+            $maxPageSize = 1000  # Request maximum allowed page size
+            $requestURI = "/subscriptions/$SubscriptionId/providers/Microsoft.Insights/eventtypes/management/values?api-version=$apiVersion&`$filter=$filter&`$top=$maxPageSize"
             
             # Add skipToken for pagination if it exists
             if ($skipToken) {
@@ -120,10 +139,10 @@ function Get-ActivityLogMetrics {
                         $totalLogsRetrieved += $logsPage.Count
                         
                         if ($OutputDir) {
-                            Write-LogEntry -Message "Retrieved $($logsPage.Count) activity logs from page $pageCount (Total: $totalLogsRetrieved)" -OutputDir $OutputDir
+                            Write-LogEntry -Message "${subCountPrefix}Retrieved $($logsPage.Count) activity logs from page $pageCount (Total: $totalLogsRetrieved)" -OutputDir $OutputDir
                         }
                         
-                        Write-Host "Retrieved $($logsPage.Count) activity logs from page $pageCount (Total: $totalLogsRetrieved)" -ForegroundColor Cyan
+                        Write-Host "${subCountPrefix}Retrieved $($logsPage.Count) activity logs from page $pageCount (Total: $totalLogsRetrieved)" -ForegroundColor Cyan
                         
                         # Get the skipToken for the next page if present
                         if ($responseContent.nextLink -and $responseContent.nextLink -match "\`$skipToken=([^&]+)") {
@@ -138,17 +157,17 @@ function Get-ActivityLogMetrics {
                     }
                 }
                 else {
-                    Write-Warning "Failed to retrieve activity logs (page $pageCount): StatusCode $($response.StatusCode)"
+                    Write-Warning "${subCountPrefix}Failed to retrieve activity logs (page $pageCount): StatusCode $($response.StatusCode)"
                     if ($OutputDir) {
-                        Write-LogEntry -Message "Failed to retrieve activity logs (page $pageCount): StatusCode $($response.StatusCode)" -Level 'WARNING' -OutputDir $OutputDir
+                        Write-LogEntry -Message "${subCountPrefix}Failed to retrieve activity logs (page $pageCount): StatusCode $($response.StatusCode)" -Level 'WARNING' -OutputDir $OutputDir
                     }
                     break
                 }
             }
             catch {
-                Write-Warning "Error calling Azure REST API for activity logs: $($_.Exception.Message)"
+                Write-Warning "${subCountPrefix}Error calling Azure REST API for activity logs: $($_.Exception.Message)"
                 if ($OutputDir) {
-                    Write-LogEntry -Message "Error calling Azure REST API for activity logs: $($_.Exception.Message)" -Level 'ERROR' -OutputDir $OutputDir
+                    Write-LogEntry -Message "${subCountPrefix}Error calling Azure REST API for activity logs: $($_.Exception.Message)" -Level 'ERROR' -OutputDir $OutputDir
                 }
                 break
             }
@@ -159,16 +178,16 @@ function Get-ActivityLogMetrics {
         $activityLogs = $allActivityLogs
         
         Write-Progress @progressParams -PercentComplete 100 -Completed
-        Write-Host "Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries across $pageCount page(s)." -ForegroundColor Green
+        Write-Host "${subCountPrefix}Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries across $pageCount page(s)." -ForegroundColor Green
         
         # Write to log file if OutputDir is provided
         if ($OutputDir) {
-            Write-LogEntry -Message "Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries." -OutputDir $OutputDir
+            Write-LogEntry -Message "${subCountPrefix}Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries." -OutputDir $OutputDir
         }
         
         # If no logs found, return empty metrics
         if ($null -eq $activityLogs -or $activityLogs.Count -eq 0) {
-            Write-Host "No Activity Logs found for the specified time period." -ForegroundColor Yellow
+            Write-Host "${subCountPrefix}No Activity Logs found for the specified time period." -ForegroundColor Yellow
             
             return [PSCustomObject]@{
                 SubscriptionId = $SubscriptionId
@@ -288,7 +307,7 @@ function Get-ActivityLogMetricsForAllSubscriptions {
             Write-LogEntry -Message "Processing subscription: $($subscription.Name) ($($subscription.Id))" -OutputDir $OutputDir
         }
         
-        $metrics = Get-ActivityLogMetrics -SubscriptionId $subscription.Id -SampleDays $SampleDays -OutputDir $OutputDir
+        $metrics = Get-ActivityLogMetrics -SubscriptionId $subscription.Id -SampleDays $SampleDays -OutputDir $OutputDir -CurrentSubscriptionNumber $currentSubscription -TotalSubscriptions $totalSubscriptions
         
         # Check if there was an error in the metrics retrieval
         if ($metrics.PSObject.Properties.Name -contains "Error") {
