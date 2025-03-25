@@ -8,7 +8,34 @@
     This PowerShell script serves as the main entry point for the CrowdStrike
     Azure Cost Estimation tool. It authenticates to Azure, retrieves subscription
     information, and prepares for further operations.
+    
+.PARAMETER MaxSubscriptions
+    Limits the number of subscriptions to process. This is useful for testing
+    in environments with many subscriptions.
+    
+.PARAMETER SampleDays
+    The number of days of log data to analyze. Default is 7 days.
+    
+.EXAMPLE
+    .\cs-azure-main.ps1 -MaxSubscriptions 5
+    Run the cost estimation tool but only process the first 5 subscriptions.
+    
+.EXAMPLE
+    .\cs-azure-main.ps1 -SampleDays 14
+    Run the cost estimation tool and analyze 14 days of logs instead of the default 7.
+    
+.EXAMPLE
+    .\cs-azure-main.ps1 -MaxSubscriptions 3 -SampleDays 3
+    Run the cost estimation tool with only 3 subscriptions and 3 days of log data.
 #>
+
+param(
+    [Parameter(Mandatory = $false)]
+    [int]$MaxSubscriptions = 0,  # 0 means process all subscriptions
+    
+    [Parameter(Mandatory = $false)]
+    [int]$SampleDays = 7  # Default to 7 days of log analysis
+)
 
 #region Configuration Settings
 # Centralized configuration parameters for the Azure Cost Estimation Tool
@@ -60,6 +87,14 @@ function Show-Header {
 
 # Main function
 function Start-AzureCostEstimation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [int]$MaxSubscriptions = 0,  # 0 means process all subscriptions
+        
+        [Parameter(Mandatory = $false)]
+        [int]$SampleDays = 7  # Default to 7 days of log analysis
+    )
     # Display header
     Show-Header
     
@@ -72,6 +107,10 @@ function Start-AzureCostEstimation {
         Write-LogEntry -Message "Required Azure modules are missing. Please install them and try again." -Level ERROR -OutputDir $outputDir
         return
     }
+    
+    # Update sample days in config with any passed parameter
+    $Script:Config.DefaultSampleDays = $SampleDays
+    Write-LogEntry -Message "Using sample period of $SampleDays days" -OutputDir $outputDir
     
     # Authenticate to Azure
     Write-LogEntry -Message "Attempting to authenticate to Azure..." -OutputDir $outputDir
@@ -88,16 +127,26 @@ function Start-AzureCostEstimation {
     
     # Retrieve subscription information
     Write-LogEntry -Message "Retrieving Azure subscriptions..." -OutputDir $outputDir
-    $subscriptions = Get-AllSubscriptions
-    
-    if (-not $subscriptions -or $subscriptions.Count -eq 0) {
+    $allSubscriptions = Get-AllSubscriptions
+
+    if (-not $allSubscriptions -or $allSubscriptions.Count -eq 0) {
         Write-LogEntry -Message "No Azure subscriptions found or unable to retrieve subscriptions." -Level WARNING -OutputDir $outputDir
         return
     }
     
+    # Limit subscriptions if MaxSubscriptions is specified
+    if ($MaxSubscriptions -gt 0 -and $allSubscriptions.Count -gt $MaxSubscriptions) {
+        Write-LogEntry -Message "Limiting analysis to first $MaxSubscriptions of $($allSubscriptions.Count) subscriptions" -OutputDir $outputDir
+        $subscriptions = $allSubscriptions | Select-Object -First $MaxSubscriptions
+        Write-Host "Processing $MaxSubscriptions subscriptions out of $($allSubscriptions.Count) available subscriptions" -ForegroundColor Yellow
+    } else {
+        $subscriptions = $allSubscriptions
+        Write-Host "Processing all $($subscriptions.Count) available subscriptions" -ForegroundColor Cyan
+    }
+    
     # Format subscription data
     $formattedSubscriptions = Format-SubscriptionData -Subscriptions $subscriptions
-    Write-LogEntry -Message "Retrieved $($subscriptions.Count) subscription(s)." -OutputDir $outputDir
+    Write-LogEntry -Message "Processing $($subscriptions.Count) subscription(s)." -OutputDir $outputDir
     
     # Export subscription data to CSV
     $csvPath = Export-ToCsv -Data $formattedSubscriptions -OutputDir $outputDir -FileName "subscriptions"
@@ -113,7 +162,7 @@ function Start-AzureCostEstimation {
     
     # Collect Activity Log metrics
     Write-LogEntry -Message "Collecting Activity Log metrics for all subscriptions..." -OutputDir $outputDir
-    $activityLogMetrics = Get-ActivityLogMetricsForAllSubscriptions -Subscriptions $subscriptions -SampleDays $Script:Config.DefaultSampleDays -OutputDir $outputDir
+    $activityLogMetrics = Get-ActivityLogMetricsForAllSubscriptions -Subscriptions $subscriptions -SampleDays $SampleDays -OutputDir $outputDir
     
     # Count successful and failed metrics
     $failedMetrics = @($activityLogMetrics | Where-Object { $_.PSObject.Properties.Name -contains "Error" })
@@ -165,5 +214,5 @@ function Start-AzureCostEstimation {
     }
 }
 
-# Execute the main function
-Start-AzureCostEstimation
+# Execute the main function with script parameters
+Start-AzureCostEstimation -MaxSubscriptions $MaxSubscriptions -SampleDays $SampleDays

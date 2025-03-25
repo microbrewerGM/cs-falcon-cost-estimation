@@ -1,5 +1,8 @@
 #Requires -Modules Az.Accounts, Az.Monitor
 
+# Add System.Web for URL encoding
+Add-Type -AssemblyName System.Web
+
 <#
 .SYNOPSIS
     Azure data collection module for cost estimation.
@@ -115,19 +118,40 @@ function Get-ActivityLogMetrics {
                 Write-LogEntry -Message "${subCountPrefix}Retrieving Activity Log page $pageCount for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
             }
             
-            # Build the request URL with proper paging and maximum page size
-            $apiVersion = "2017-03-01-preview"
-            $maxPageSize = 1000  # Request maximum allowed page size
-            $requestURI = "/subscriptions/$SubscriptionId/providers/Microsoft.Insights/eventtypes/management/values?api-version=$apiVersion&`$filter=$filter&`$top=$maxPageSize"
+            # Build the request properly to ensure we get maximum page size
+            $apiVersion = "2021-12-01-preview"  # Use a more recent API version
             
-            # Add skipToken for pagination if it exists
-            if ($skipToken) {
-                $requestURI += "&`$skipToken=$skipToken"
+            # Create base URI for Azure Resource Manager
+            $baseUri = "https://management.azure.com"
+            $resourcePath = "/subscriptions/$SubscriptionId/providers/Microsoft.Insights/eventtypes/management/values"
+            
+            # Create params dictionary for proper URL encoding
+            $queryParams = @{
+                'api-version' = $apiVersion
+                '$filter' = $filter
+                '$top' = '1000'  # Request maximum page size explicitly as a string
             }
             
+            # Add skip token if we have one
+            if ($skipToken) {
+                $queryParams['$skipToken'] = $skipToken
+            }
+            
+            # Build a proper query string with URL encoding
+            $queryString = "?" + ($queryParams.GetEnumerator() | ForEach-Object {
+                "{0}={1}" -f $_.Key, [System.Web.HttpUtility]::UrlEncode($_.Value)
+            }) -join "&"
+            
+            # Construct the full URI
+            $fullUri = $baseUri + $resourcePath + $queryString
+            
+            # Log the full URI for debugging (without vulnerable data)
+            $debugUri = $fullUri -replace "subscriptions/[^/]+", "subscriptions/xxxx"
+            Write-Host "${subCountPrefix}DEBUG: API Request URI: $debugUri" -ForegroundColor DarkGray
+            
             try {
-                # Make the REST API call instead of using Get-AzActivityLog which doesn't support pagination
-                $response = Invoke-AzRestMethod -Method GET -Path $requestURI
+                # Make the REST API call with the Uri parameter instead of Path
+                $response = Invoke-AzRestMethod -Method GET -Uri $fullUri
                 
                 # Check if the call was successful
                 if ($response.StatusCode -eq 200) {
@@ -137,6 +161,9 @@ function Get-ActivityLogMetrics {
                         $logsPage = $responseContent.value
                         $allActivityLogs += $logsPage
                         $totalLogsRetrieved += $logsPage.Count
+                        
+                        # Log the actual page size for debugging
+                        Write-Host "${subCountPrefix}DEBUG: Retrieved page size: $($logsPage.Count) records" -ForegroundColor DarkGray
                         
                         if ($OutputDir) {
                             Write-LogEntry -Message "${subCountPrefix}Retrieved $($logsPage.Count) activity logs from page $pageCount (Total: $totalLogsRetrieved)" -OutputDir $OutputDir
