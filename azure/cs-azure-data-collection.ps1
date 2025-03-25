@@ -73,21 +73,93 @@ function Get-ActivityLogMetrics {
         }
         Write-Progress @progressParams
         
-        # Retrieve Activity Logs with proper progress indication
-        # MaxRecord parameter is valid but there's no ContinuationToken parameter
-        # Instead, we'll use a single call with MaxRecord set to the maximum value
-        Write-Progress @progressParams -Status "Retrieving logs for subscription: $($currentContext.Subscription.Name)" -PercentComplete 50
+        # Retrieve Activity Logs with proper pagination to handle more than 1000 results
+        Write-Progress @progressParams -Status "Retrieving initial logs for subscription: $($currentContext.Subscription.Name)" -PercentComplete 20
         
         if ($OutputDir) {
-            Write-LogEntry -Message "Retrieving Activity Logs for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
+            Write-LogEntry -Message "Starting paginated Activity Log retrieval for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
         }
         
-        # Use MaxRecord parameter to get up to 1000 records (maximum allowed by the API)
-        # Explicitly avoid using the DetailedOutput parameter (deprecated)
-        $activityLogs = Get-AzActivityLog -StartTime $startTime -EndTime $endTime -MaxRecord 1000
+        # Use REST API with pagination since Get-AzActivityLog doesn't support continuation tokens
+        $allActivityLogs = @()
+        $pageCount = 0
+        $totalLogsRetrieved = 0
+        $filter = "eventTimestamp ge '${startTime}' and eventTimestamp le '${endTime}'"
+        $skipToken = $null
+        
+        do {
+            $pageCount++
+            
+            # Update progress
+            Write-Progress @progressParams -Status "Retrieving page $pageCount for subscription: $($currentContext.Subscription.Name)" -PercentComplete (20 + ($pageCount * 5) % 70)
+            
+            if ($OutputDir) {
+                Write-LogEntry -Message "Retrieving Activity Log page $pageCount for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
+            }
+            
+            # Build the request URL with proper paging
+            $apiVersion = "2017-03-01-preview"
+            $requestURI = "/subscriptions/$SubscriptionId/providers/Microsoft.Insights/eventtypes/management/values?api-version=$apiVersion&`$filter=$filter"
+            
+            # Add skipToken for pagination if it exists
+            if ($skipToken) {
+                $requestURI += "&`$skipToken=$skipToken"
+            }
+            
+            try {
+                # Make the REST API call instead of using Get-AzActivityLog which doesn't support pagination
+                $response = Invoke-AzRestMethod -Method GET -Path $requestURI
+                
+                # Check if the call was successful
+                if ($response.StatusCode -eq 200) {
+                    $responseContent = $response.Content | ConvertFrom-Json
+                    
+                    if ($responseContent.value) {
+                        $logsPage = $responseContent.value
+                        $allActivityLogs += $logsPage
+                        $totalLogsRetrieved += $logsPage.Count
+                        
+                        if ($OutputDir) {
+                            Write-LogEntry -Message "Retrieved $($logsPage.Count) activity logs from page $pageCount (Total: $totalLogsRetrieved)" -OutputDir $OutputDir
+                        }
+                        
+                        Write-Host "Retrieved $($logsPage.Count) activity logs from page $pageCount (Total: $totalLogsRetrieved)" -ForegroundColor Cyan
+                        
+                        # Get the skipToken for the next page if present
+                        if ($responseContent.nextLink -and $responseContent.nextLink -match "\`$skipToken=([^&]+)") {
+                            $skipToken = $Matches[1]
+                        }
+                        else {
+                            $skipToken = $null
+                        }
+                    }
+                    else {
+                        $logsPage = @()
+                    }
+                }
+                else {
+                    Write-Warning "Failed to retrieve activity logs (page $pageCount): StatusCode $($response.StatusCode)"
+                    if ($OutputDir) {
+                        Write-LogEntry -Message "Failed to retrieve activity logs (page $pageCount): StatusCode $($response.StatusCode)" -Level 'WARNING' -OutputDir $OutputDir
+                    }
+                    break
+                }
+            }
+            catch {
+                Write-Warning "Error calling Azure REST API for activity logs: $($_.Exception.Message)"
+                if ($OutputDir) {
+                    Write-LogEntry -Message "Error calling Azure REST API for activity logs: $($_.Exception.Message)" -Level 'ERROR' -OutputDir $OutputDir
+                }
+                break
+            }
+            
+        } while ($logsPage.Count -gt 0 -and $skipToken)
+        
+        # Assign the properly paginated logs
+        $activityLogs = $allActivityLogs
         
         Write-Progress @progressParams -PercentComplete 100 -Completed
-        Write-Host "Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries." -ForegroundColor Green
+        Write-Host "Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries across $pageCount page(s)." -ForegroundColor Green
         
         # Write to log file if OutputDir is provided
         if ($OutputDir) {
