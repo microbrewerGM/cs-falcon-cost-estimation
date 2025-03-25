@@ -396,13 +396,13 @@ function Process-Subscription {
     
     # Calculate cost estimate for this subscription
     $subscriptionEstimate = Get-SubscriptionCostEstimate -SubscriptionId $subscriptionId `
-                                                       -SubscriptionMetadata $subscriptionMetadata `
-                                                       -ActivityLogData $activityLogData `
-                                                       -ResourceData $resourceData `
-                                                       -EntraIdData $script:entraIdMetrics `
-                                                       -Pricing $regionPricing `
-                                                       -IsProductionEnvironment $isProduction `
-                                                       -BusinessUnit $businessUnit
+                                                         -SubscriptionMetadata $subscriptionMetadata `
+                                                         -ActivityLogData $activityLogData `
+                                                         -ResourceData $resourceData `
+                                                         -EntraIdData $script:entraIdMetrics `
+                                                         -Pricing $regionPricing `
+                                                         -IsProductionEnvironment $isProduction `
+                                                         -BusinessUnit $businessUnit
     
     # Add subscription name to the estimate for easier identification
     $subscriptionEstimate["SubscriptionName"] = $subscriptionName
@@ -596,18 +596,18 @@ $buExportSuccess = Export-BusinessUnitCostsToCsv -BusinessUnitSummary $businessU
 
 # Export all data to a summary JSON file
 $jsonExportSuccess = Export-SummaryToJson -SubscriptionEstimates $subscriptionEstimates `
-                                         -BusinessUnitSummary $businessUnitSummary `
-                                         -ManagementGroupSummary $managementGroupSummary `
-                                         -EntraIdData $entraIdMetrics `
-                                         -OutputFilePath $SummaryJsonPath
+                                          -BusinessUnitSummary $businessUnitSummary `
+                                          -ManagementGroupSummary $managementGroupSummary `
+                                          -EntraIdData $entraIdMetrics `
+                                          -OutputFilePath $SummaryJsonPath
 
 # Generate HTML report
 $htmlReportSuccess = New-HtmlReport -SubscriptionEstimates $subscriptionEstimates `
-                                   -BusinessUnitSummary $businessUnitSummary `
-                                   -ManagementGroupSummary $managementGroupSummary `
-                                   -OutputFilePath $HtmlReportPath `
-                                   -ReportTitle "CrowdStrike Azure Cost Estimation Report" `
-                                   -IncludeCharts $IncludeCharts
+                                    -BusinessUnitSummary $businessUnitSummary `
+                                    -ManagementGroupSummary $managementGroupSummary `
+                                    -OutputFilePath $HtmlReportPath `
+                                    -ReportTitle "CrowdStrike Azure Cost Estimation Report" `
+                                    -IncludeCharts $IncludeCharts
 
 # Script Completion
 # ================
