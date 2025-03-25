@@ -322,24 +322,92 @@ function Get-EntraIdLogMetrics {
         $connected = $false
         
         try {
-            $tenantInfo = Get-AzureADTenantDetail -ErrorAction Stop
-            $connected = $true
+            # First try using Azure AD module if available
+            if (Get-Module -Name AzureAD -ListAvailable) {
+                try {
+                    # Check if module is loaded
+                    if (-not (Get-Module -Name AzureAD)) {
+                        Import-Module AzureAD -ErrorAction Stop
+                    }
+                    
+                    # Connect to Azure AD
+                    Connect-AzureAD -ErrorAction Stop | Out-Null
+                    $connected = $true
+                    Write-Log "Connected to Azure AD using AzureAD module" -Level 'INFO' -Category 'EntraID'
+                }
+                catch {
+                    Write-Log "Failed to connect using AzureAD module: $($_.Exception.Message)" -Level 'WARNING' -Category 'EntraID'
+                    # Continue to try other methods
+                }
+            }
+            
+            # If AzureAD not available or failed, try Microsoft Graph
+            if (-not $connected -and (Get-Module -ListAvailable -Name Microsoft.Graph.Identity.DirectoryManagement)) {
+                try {
+                    # Load required Microsoft Graph modules
+                    Import-Module Microsoft.Graph.Identity.DirectoryManagement -ErrorAction SilentlyContinue
+                    if (-not (Get-MgContext -ErrorAction SilentlyContinue)) {
+                        Connect-MgGraph -Scopes "Directory.Read.All" -ErrorAction Stop | Out-Null
+                    }
+                    $orgInfo = Get-MgOrganization -ErrorAction Stop
+                    $connected = $true
+                    Write-Log "Connected to Entra ID using Microsoft Graph module" -Level 'INFO' -Category 'EntraID'
+                }
+                catch {
+                    Write-Log "Failed to connect using Microsoft Graph: $($_.Exception.Message)" -Level 'WARNING' -Category 'EntraID'
+                }
+            }
+            
+            # If still not connected, try using Az modules as last resort
+            if (-not $connected) {
+                try {
+                    $tenantDetails = Get-AzTenant -ErrorAction Stop
+                    $connected = $true
+                    Write-Log "Using Az module for tenant information" -Level 'INFO' -Category 'EntraID'
+                }
+                catch {
+                    Write-Log "Failed to get tenant info using Az module: $($_.Exception.Message)" -Level 'WARNING' -Category 'EntraID'
+                }
+            }
         }
         catch {
-            try {
-                Connect-AzureAD -ErrorAction Stop | Out-Null
-                $tenantInfo = Get-AzureADTenantDetail -ErrorAction Stop
-                $connected = $true
-            }
-            catch {
-                Write-Log "Unable to connect to Entra ID: $($_.Exception.Message)" -Level 'WARNING' -Category 'EntraID'
-            }
+            Write-Log "Unable to connect to Entra ID: $($_.Exception.Message)" -Level 'WARNING' -Category 'EntraID'
         }
         
         if ($connected) {
             # Get user count which will help with estimating sign-in volume
-            $users = Get-AzureADUser -All $true -ErrorAction Stop
-            $metrics.UserCount = $users.Count
+            try {
+                # Try using Graph API first
+                if (Get-Module -ListAvailable -Name Microsoft.Graph.Users) {
+                    try {
+                        Import-Module Microsoft.Graph.Users -ErrorAction SilentlyContinue
+                        if (-not (Get-MgContext -ErrorAction SilentlyContinue)) {
+                            Connect-MgGraph -Scopes "Directory.Read.All" -ErrorAction SilentlyContinue | Out-Null
+                        }
+                        $users = Get-MgUser -Count userCount -ConsistencyLevel eventual -ErrorAction Stop
+                        $metrics.UserCount = $users.Count
+                        Write-Log "Retrieved user count using Microsoft Graph module" -Level 'INFO' -Category 'EntraID'
+                    }
+                    catch {
+                        Write-Log "Failed to get user count using Graph: $($_.Exception.Message)" -Level 'WARNING' -Category 'EntraID'
+                        # Fall through to the Az estimate
+                    }
+                }
+                
+                # If we still don't have a user count, use Az module for estimation
+                if ($metrics.UserCount -eq 0) {
+                    # This is less accurate but provides a fallback
+                    $tenantId = (Get-AzContext).Tenant.Id
+                    Write-Log "Using estimated user count for tenant $tenantId" -Level 'INFO' -Category 'EntraID'
+                    # Set a default value, we'll estimate based on subscription count
+                    $subCount = (Get-AzSubscription).Count
+                    $metrics.UserCount = [Math]::Max(500, $subCount * 50) # Rough estimate
+                }
+            }
+            catch {
+                Write-Log "Unable to get user count, using default: $($_.Exception.Message)" -Level 'WARNING' -Category 'EntraID'
+                $metrics.UserCount = 500 # Default fallback
+            }
             
             # Determine organization size based on user count
             if ($metrics.UserCount -lt 1000) {

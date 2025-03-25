@@ -39,8 +39,6 @@ The tag name used for business unit attribution.
 .PARAMETER IncludeManagementGroups
 Include management group structure for organizational reporting.
 
-.PARAMETER DevelopmentMode
-Run in development mode, which will mock Azure dependencies. Default is false.
 
 .EXAMPLE
 .\cs-azure-cost-estimation-v2-launcher.ps1 -DaysToAnalyze 14 -SampleLogSize 200
@@ -82,10 +80,7 @@ param(
     [string]$BusinessUnitTagName,
 
     [Parameter(Mandatory = $false)]
-    [bool]$IncludeManagementGroups,
-    
-    [Parameter(Mandatory = $false)]
-    [switch]$DevelopmentMode
+    [bool]$IncludeManagementGroups
 )
 
 # Path to key directories
@@ -109,70 +104,64 @@ if ($PSVersionTable.PSEdition -ne "Core") {
 }
 
 # Check if Azure PowerShell modules are installed
-if (-not $DevelopmentMode) {
-    $azureModules = @(
-        "Az.Accounts",
-        "Az.Resources",
-        "Az.Monitor"
-    )
-    
-    $missingAzModules = @()
-    foreach ($module in $azureModules) {
-        if (-not (Get-Module -ListAvailable -Name $module)) {
-            $missingAzModules += $module
-        }
+$azureModules = @(
+    "Az.Accounts",
+    "Az.Resources",
+    "Az.Monitor",
+    "Microsoft.Graph.Identity.DirectoryManagement",
+    "Microsoft.Graph.Users"
+)
+
+$missingAzModules = @()
+foreach ($module in $azureModules) {
+    if (-not (Get-Module -ListAvailable -Name $module)) {
+        $missingAzModules += $module
+    }
+}
+
+if ($missingAzModules.Count -gt 0) {
+    Write-Host "Error: Required Azure PowerShell modules are missing:" -ForegroundColor Red
+    foreach ($module in $missingAzModules) {
+        Write-Host "  - $module" -ForegroundColor Red
     }
     
-    if ($missingAzModules.Count -gt 0) {
-        Write-Host "Error: Required Azure PowerShell modules are missing:" -ForegroundColor Red
-        foreach ($module in $missingAzModules) {
-            Write-Host "  - $module" -ForegroundColor Red
-        }
-        
-        Write-Host "`nThese modules are required for script operation. Would you like to:" -ForegroundColor Yellow
-        Write-Host "  1. Install the missing modules now (requires admin permissions)"
-        Write-Host "  2. Run in development mode with simulated Azure dependencies"
-        Write-Host "  3. Exit"
-        
-        $choice = Read-Host "Enter your choice (1-3)"
-        
-        switch ($choice) {
-            "1" {
-                Write-Host "Installing missing Azure PowerShell modules..." -ForegroundColor Cyan
-                foreach ($module in $missingAzModules) {
-                    try {
-                        Write-Host "Installing $module..." -ForegroundColor Cyan
-                        Install-Module -Name $module -Scope CurrentUser -Force -AllowClobber
-                        Write-Host "$module installed successfully" -ForegroundColor Green
-                    }
-                    catch {
-                        Write-Host "Failed to install $module. Error: $($_.Exception.Message)" -ForegroundColor Red
-                        Write-Host "You can try installing it manually using: Install-Module -Name $module -Scope CurrentUser -Force -AllowClobber" -ForegroundColor Yellow
-                        exit 1
-                    }
+    Write-Host "`nThese modules are required for script operation. Would you like to:" -ForegroundColor Yellow
+    Write-Host "  1. Install the missing modules now (requires admin permissions)"
+    Write-Host "  2. Exit"
+    
+    $choice = Read-Host "Enter your choice (1-2)"
+    
+    switch ($choice) {
+        "1" {
+            Write-Host "Installing missing Azure PowerShell modules..." -ForegroundColor Cyan
+            foreach ($module in $missingAzModules) {
+                try {
+                    Write-Host "Installing $module..." -ForegroundColor Cyan
+                    Install-Module -Name $module -Scope CurrentUser -Force -AllowClobber
+                    Write-Host "$module installed successfully" -ForegroundColor Green
+                }
+                catch {
+                    Write-Host "Failed to install $module. Error: $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "You can try installing it manually using: Install-Module -Name $module -Scope CurrentUser -Force -AllowClobber" -ForegroundColor Yellow
+                    exit 1
                 }
             }
-            "2" {
-                Write-Host "Enabling development mode with simulated Azure dependencies" -ForegroundColor Yellow
-                $DevelopmentMode = $true
-                $paramSplat["DevelopmentMode"] = $true
-            }
-            "3" {
-                Write-Host "Exiting script" -ForegroundColor Red
-                exit 0
-            }
-            default {
-                Write-Host "Invalid choice. Exiting script" -ForegroundColor Red
-                exit 1
-            }
+            
+            # All required modules have been installed
+            Write-Host "All required modules have been installed successfully." -ForegroundColor Green
         }
-    }
-    else {
-        Write-Host "Required Azure PowerShell modules are installed" -ForegroundColor Green
+        "2" {
+            Write-Host "Exiting script" -ForegroundColor Red
+            exit 0
+        }
+        default {
+            Write-Host "Invalid choice. Exiting script" -ForegroundColor Red
+            exit 1
+        }
     }
 }
 else {
-    Write-Host "Running in DEVELOPMENT MODE - Azure dependencies will be simulated" -ForegroundColor Yellow
+    Write-Host "Required Azure PowerShell modules are installed" -ForegroundColor Green
 }
 
 # Check all required module files exist 

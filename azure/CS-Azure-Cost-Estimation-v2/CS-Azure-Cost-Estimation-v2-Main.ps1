@@ -143,34 +143,71 @@ try {
     $originalPSModulePath = $env:PSModulePath
     $env:PSModulePath = $modulesPath + [IO.Path]::PathSeparator + $env:PSModulePath
     
-    # Import modules directly using Import-Module with paths
-    Write-Host "Importing ConfigLoader module..." -ForegroundColor Cyan
-    Import-Module $configLoaderPath -Force -Global
-    Write-Host "Imported ConfigLoader module" -ForegroundColor Green
-    
-    Write-Host "Importing Logging module..." -ForegroundColor Cyan
-    Import-Module $loggingPath -Force -Global
-    Write-Host "Imported Logging module" -ForegroundColor Green
-    
-    Write-Host "Importing Authentication module..." -ForegroundColor Cyan
-    Import-Module $authenticationPath -Force -Global
-    Write-Host "Imported Authentication module" -ForegroundColor Green
-    
-    Write-Host "Importing Pricing module..." -ForegroundColor Cyan
-    Import-Module $pricingPath -Force -Global
-    Write-Host "Imported Pricing module" -ForegroundColor Green
-    
-    Write-Host "Importing DataCollection module..." -ForegroundColor Cyan
-    Import-Module $dataCollectionPath -Force -Global
-    Write-Host "Imported DataCollection module" -ForegroundColor Green
-    
-    Write-Host "Importing CostEstimation module..." -ForegroundColor Cyan
-    Import-Module $costEstimationPath -Force -Global
-    Write-Host "Imported CostEstimation module" -ForegroundColor Green
-    
-    Write-Host "Importing Reporting module..." -ForegroundColor Cyan
-    Import-Module $reportingPath -Force -Global
-    Write-Host "Imported Reporting module" -ForegroundColor Green
+# Import modules directly using Import-Module with paths
+Write-Host "Importing ConfigLoader module..." -ForegroundColor Cyan
+Import-Module $configLoaderPath -Force -Global
+Write-Host "Imported ConfigLoader module" -ForegroundColor Green
+
+Write-Host "Importing Logging module..." -ForegroundColor Cyan
+Import-Module $loggingPath -Force -Global
+Write-Host "Imported Logging module" -ForegroundColor Green
+
+Write-Host "Importing Authentication module..." -ForegroundColor Cyan
+Import-Module $authenticationPath -Force -Global
+Write-Host "Imported Authentication module" -ForegroundColor Green
+
+Write-Host "Importing Pricing module..." -ForegroundColor Cyan
+Import-Module $pricingPath -Force -Global
+Write-Host "Imported Pricing module" -ForegroundColor Green
+
+Write-Host "Importing DataCollection module..." -ForegroundColor Cyan
+Import-Module $dataCollectionPath -Force -Global
+Write-Host "Imported DataCollection module" -ForegroundColor Green
+
+Write-Host "Importing CostEstimation module..." -ForegroundColor Cyan
+Import-Module $costEstimationPath -Force -Global
+Write-Host "Imported CostEstimation module" -ForegroundColor Green
+
+Write-Host "Importing Reporting module..." -ForegroundColor Cyan
+Import-Module $reportingPath -Force -Global
+Write-Host "Imported Reporting module" -ForegroundColor Green
+
+# Also import ProcessSubscription module for parallel jobs
+$processSubscriptionPath = Join-Path $modulesPath "ProcessSubscription.psm1"
+if (Test-Path $processSubscriptionPath) {
+    Write-Host "Importing ProcessSubscription module..." -ForegroundColor Cyan
+    Import-Module $processSubscriptionPath -Force -Global
+    Write-Host "Imported ProcessSubscription module" -ForegroundColor Green
+}
+else {
+    Write-Host "ProcessSubscription module not found at $processSubscriptionPath. Only sequential processing will be available." -ForegroundColor Yellow
+    $ParallelExecution = $false
+}
+
+# Check for required Azure modules
+if (-not (Get-Module -Name Az.Accounts -ListAvailable)) {
+    Write-Warning "Az.Accounts module not found. Please install it using 'Install-Module Az.Accounts -Force'"
+}
+
+if (-not (Get-Module -Name Microsoft.Graph.Identity.DirectoryManagement -ListAvailable) -and 
+    -not (Get-Module -Name Az.Resources -ListAvailable)) {
+    Write-Warning "Neither Microsoft.Graph.Identity.DirectoryManagement nor Az.Resources module found. Limited functionality will be available."
+    Write-Warning "Install Microsoft.Graph modules using 'Install-Module Microsoft.Graph -Force'"
+}
+
+# Try to load AzureAD module if available (not required, will fall back to Graph API)
+if (Get-Module -Name AzureAD -ListAvailable) {
+    try {
+        Import-Module AzureAD -ErrorAction SilentlyContinue
+        Write-Host "AzureAD module loaded." -ForegroundColor Green
+    }
+    catch {
+        Write-Warning "AzureAD module found but could not be loaded. Will use Graph API for tenant information."
+    }
+}
+else {
+    Write-Warning "AzureAD module not found. Will use Microsoft Graph or Az APIs for tenant information."
+}
     
     # Restore original PSModulePath
     $env:PSModulePath = $originalPSModulePath
@@ -271,6 +308,22 @@ if (-not $pricingInfo) {
 Write-Log "Collecting Entra ID metrics..." -Level 'INFO' -Category 'EntraID'
 $entraIdMetrics = Get-EntraIdLogMetrics -DaysToAnalyze $DaysToAnalyze
 
+# Save Entra ID metrics to a file for job access
+$entraIdMetricsPath = Join-Path $OutputDirectory "entra-id-metrics.json"
+$entraIdMetrics | ConvertTo-Json -Depth 10 | Out-File -FilePath $entraIdMetricsPath -Force
+Write-Log "Saved Entra ID metrics to $entraIdMetricsPath" -Level 'INFO' -Category 'EntraID'
+
+# Also save pricing info if we're using parallel jobs
+if ($UseRealPricing -and $ParallelExecution) {
+    $pricingDirPath = Join-Path $OutputDirectory "pricing-data"
+    if (-not (Test-Path $pricingDirPath)) {
+        New-Item -Path $pricingDirPath -ItemType Directory -Force | Out-Null
+    }
+    $pricingCachePath = Join-Path $pricingDirPath "pricing-cache.json"
+    $pricingInfo | ConvertTo-Json -Depth 10 | Out-File -FilePath $pricingCachePath -Force
+    Write-Log "Saved pricing data to $pricingCachePath" -Level 'INFO' -Category 'Pricing'
+}
+
 # Get list of all accessible subscriptions
 Write-Log "Retrieving available subscriptions..." -Level 'INFO' -Category 'Subscription'
 $subscriptions = Get-AzSubscription | Where-Object { $_.State -eq "Enabled" }
@@ -364,41 +417,68 @@ function Process-Subscription {
 if ($ParallelExecution -and $subscriptionCount -gt 1) {
     Write-Log "Using parallel execution with maximum of $MaxParallelJobs concurrent jobs" -Level 'INFO' -Category 'Execution'
     
-    # Create a session state for script-level variables
-    $sessionState = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+    # Use the external job script file instead of inline script block
+    $jobScriptPath = Join-Path $scriptPath "Process-Subscription-Job.ps1"
     
-    # Create job objects
-    $jobs = @()
-    $jobScriptBlock = {
-        param($subscription, $processedCount, $totalCount, $startTime)
-        Process-Subscription -Subscription $subscription -ProcessedCount $processedCount -TotalCount $totalCount -StartTime $startTime
+    if (-not (Test-Path $jobScriptPath)) {
+        Write-Log "Job script not found at $jobScriptPath. Falling back to sequential processing." -Level 'WARNING' -Category 'Execution'
+        $ParallelExecution = $false
     }
-    
-    # Submit jobs in batches according to MaxParallelJobs
-    for ($i = 0; $i -lt $subscriptionCount; $i++) {
-        $subscription = $subscriptions[$i]
-        $processedCount = $i + 1
+    else {
+        # Create jobs array
+        $jobs = @()
         
-        # Create a background job for this subscription
-        $job = Start-Job -ScriptBlock $jobScriptBlock -ArgumentList $subscription, $processedCount, $totalSubs, $startTime
-        $jobs += $job
-        
-        # Update status file
-        $status = @{
-            "Total" = $totalSubs
-            "Processed" = $processedCount
-            "Percentage" = [math]::Round(($processedCount / $totalSubs) * 100)
-            "CurrentlyProcessing" = $subscription.Name
-        }
-        $status | ConvertTo-Json | Out-File -FilePath $StatusFilePath -Force
-        
-        # If we've reached the maximum number of parallel jobs, wait for one to complete
-        if ($jobs.Count -ge $MaxParallelJobs) {
-            $completedJob = $jobs | Wait-Job -Any
-            $estimate = Receive-Job $completedJob
-            $subscriptionEstimates += $estimate
-            Remove-Job $completedJob
-            $jobs = $jobs | Where-Object { $_.Id -ne $completedJob.Id }
+        # Submit jobs in batches according to MaxParallelJobs
+        for ($i = 0; $i -lt $subscriptionCount; $i++) {
+            $subscription = $subscriptions[$i]
+            $processedCount = $i + 1
+            
+            # Get parameters for job
+            $jobParams = @{
+                SubscriptionId = $subscription.Id
+                SubscriptionName = $subscription.Name
+                ProcessedCount = $processedCount
+                TotalCount = $totalSubs
+                StartTimeStr = $startTime.ToString("o") # ISO 8601 format for reliable parsing
+                DaysToAnalyze = $DaysToAnalyze
+                SampleLogSize = $SampleLogSize
+                UseRealPricing = $UseRealPricing
+                ModulePath = $modulesPath
+                OutputDirectory = $OutputDirectory
+            }
+            
+            # Start the job
+            $job = Start-Job -FilePath $jobScriptPath -ArgumentList @(
+                $jobParams.SubscriptionId, 
+                $jobParams.SubscriptionName, 
+                $jobParams.ProcessedCount, 
+                $jobParams.TotalCount, 
+                $jobParams.StartTimeStr,
+                $jobParams.DaysToAnalyze,
+                $jobParams.SampleLogSize,
+                $jobParams.UseRealPricing,
+                $jobParams.ModulePath,
+                $jobParams.OutputDirectory
+            )
+            $jobs += $job
+            
+            # Update status file
+            $status = @{
+                "Total" = $totalSubs
+                "Processed" = $processedCount
+                "Percentage" = [math]::Round(($processedCount / $totalSubs) * 100)
+                "CurrentlyProcessing" = $subscription.Name
+            }
+            $status | ConvertTo-Json | Out-File -FilePath $StatusFilePath -Force
+            
+            # If we've reached the maximum number of parallel jobs, wait for one to complete
+            if ($jobs.Count -ge $MaxParallelJobs) {
+                $completedJob = $jobs | Wait-Job -Any
+                $estimate = Receive-Job $completedJob
+                $subscriptionEstimates += $estimate
+                Remove-Job $completedJob
+                $jobs = $jobs | Where-Object { $_.Id -ne $completedJob.Id }
+            }
         }
     }
     
