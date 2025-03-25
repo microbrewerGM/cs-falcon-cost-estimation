@@ -614,12 +614,21 @@ foreach ($subscription in $subscriptions) {
                     if ($response.StatusCode -eq 200) {
                         $responseContent = $response.Content | ConvertFrom-Json
                         
-                        if ($responseContent.value) {
-                            $logsPage = $responseContent.value
+                        if ($responseContent.PSObject.Properties.Name -contains "value" -and $responseContent.value) {
+                            # Convert to simple objects to avoid comparison issues
+                            $logsPage = @($responseContent.value | ForEach-Object { 
+                                # Convert complex objects to simple hashtables
+                                $properties = @{}
+                                foreach ($prop in $_.PSObject.Properties) {
+                                    $properties[$prop.Name] = $prop.Value.ToString()
+                                }
+                                [PSCustomObject]$properties
+                            })
+                            
                             $activityLogs += $logsPage
                             $totalLogsRetrieved += $logsPage.Count
                             
-                            # Log page details with operation types breakdown
+                            # Log page details with operation types breakdown - using string comparison
                             $operationTypes = $logsPage | Group-Object -Property OperationName | 
                                               Select-Object Name, Count | Sort-Object -Property Count -Descending
                             
@@ -630,14 +639,12 @@ foreach ($subscription in $subscriptions) {
                             Write-Log "  Top operations: ${topOperationsText}" -Level 'INFO'
                             
                             # Get the skipToken for the next page, if present
-                            $skipToken = $responseContent.nextLink
-                            if ($skipToken) {
-                                # Extract the skipToken from the nextLink URL
-                                if ($skipToken -match "\`$skipToken=([^&]+)") {
+                            $skipToken = $null
+                            if ($responseContent.PSObject.Properties.Name -contains "nextLink" -and $responseContent.nextLink) {
+                                $nextLink = $responseContent.nextLink.ToString()
+                                # Extract the skipToken from the nextLink URL as a string
+                                if ($nextLink -match "\`$skipToken=([^&]+)") {
                                     $skipToken = $Matches[1]
-                                }
-                                else {
-                                    $skipToken = $null
                                 }
                             }
                         }
@@ -652,16 +659,19 @@ foreach ($subscription in $subscriptions) {
                 }
                 catch {
                     Write-Log "Error calling Azure REST API: $($_.Exception.Message)" -Level 'WARNING'
-                    # Fix comparison issues by converting objects to strings
-                    # This handles the issue with comparing Microsoft.Storage objects
-                    try {
-                        # Force PowerShell to use string comparison for objects
-                        $ErrorActionPreference = "SilentlyContinue"
-                        [System.Environment]::SetEnvironmentVariable("POWERSHELL_COMPARE_AS_STRING", "true")
+                    
+                    # Check if we're having issues with object comparisons
+                    if ($_.Exception.Message -like "*objects are not the same type*" -or 
+                        $_.Exception.Message -like "*does not implement*IComparable*") {
+                        Write-Log "Detected object comparison issue. Continuing with available data." -Level 'WARNING'
+                        
+                        # Set a flag that we've already processed some logs
+                        if ($activityLogs.Count -gt 0) {
+                            Write-Log "Already retrieved $($activityLogs.Count) logs before the error, using those for analysis." -Level 'INFO'
+                        }
                     }
-                    catch {
-                        Write-Log "Could not set string comparison mode: $($_.Exception.Message)" -Level 'WARNING'
-                    }
+                    
+                    # Break out of the loop and work with what we have
                     break
                 }
                 
