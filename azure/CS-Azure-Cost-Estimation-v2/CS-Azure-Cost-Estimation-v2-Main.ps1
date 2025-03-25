@@ -440,7 +440,7 @@ if ($IncludeManagementGroups) {
         Write-Log "Management group cost analysis complete. Found $($managementGroupSummary.Keys.Count) groups" -Level 'SUCCESS' -Category 'ManagementGroups'
     }
     catch {
-        Write-Log "Error collecting management group information: $_" -Level 'WARNING' -Category 'ManagementGroups'
+        Write-Log "Error collecting management group information: ${_}" -Level 'WARNING' -Category 'ManagementGroups'
         Write-Log "Management group reporting disabled. Continuing with other analyses." -Level 'WARNING' -Category 'ManagementGroups'
     }
 }
