@@ -182,14 +182,77 @@ $MaxDegreeOfParallelism = 10       # Maximum number of parallel threads for runs
 $ParallelTimeout = 300             # Timeout in seconds for parallel jobs
 $ThrottleLimitFactorForSubs = 0.3  # Percentage of subscriptions to process in parallel (prevents throttling)
 
+# Environment Classification Settings
+$EnvironmentCategories = @{
+    Production = @{
+        NamePatterns = @("prod", "production", "prd")
+        TagKeys = @("Environment", "Env")
+        TagValues = @("prod", "production", "prd")
+        Color = "#DC3912"  # Red
+        Priority = 1       # Higher priority means this category takes precedence when multiple matches
+    }
+    PreProduction = @{
+        NamePatterns = @("preprod", "staging", "stg", "uat")
+        TagKeys = @("Environment", "Env")
+        TagValues = @("preprod", "staging", "stg", "uat")
+        Color = "#FF9900"  # Orange
+        Priority = 2
+    }
+    QA = @{
+        NamePatterns = @("qa", "test", "testing")
+        TagKeys = @("Environment", "Env")
+        TagValues = @("qa", "test", "testing")
+        Color = "#109618"  # Green
+        Priority = 3
+    }
+    Development = @{
+        NamePatterns = @("dev", "development")
+        TagKeys = @("Environment", "Env")
+        TagValues = @("dev", "development")
+        Color = "#3366CC"  # Blue
+        Priority = 4
+    }
+    Sandbox = @{
+        NamePatterns = @("sandbox", "lab", "poc", "demo", "experiment")
+        TagKeys = @("Environment", "Env")
+        TagValues = @("sandbox", "lab", "poc", "demo", "experiment")
+        Color = "#990099"  # Purple
+        Priority = 5
+    }
+    DataModeling = @{
+        NamePatterns = @("data", "analytics", "ml", "ai")
+        TagKeys = @("Environment", "Env", "Purpose")
+        TagValues = @("data", "analytics", "ml", "ai", "datamodeling")
+        Color = "#0099C6"  # Cyan
+        Priority = 6
+    }
+    Infrastructure = @{
+        NamePatterns = @("infra", "mgmt", "management", "shared", "hub")
+        TagKeys = @("Environment", "Env", "Purpose")
+        TagValues = @("infra", "infrastructure", "mgmt", "management", "shared", "hub")
+        Color = "#DD4477"  # Pink
+        Priority = 7
+    }
+    Personal = @{
+        NamePatterns = @("personal", "individual", "user")
+        TagKeys = @("Environment", "Env", "Purpose", "Owner")
+        TagValues = @("personal", "individual", "research")
+        Color = "#66AA00"  # Light green
+        Priority = 8
+    }
+}
+
+$DefaultEnvironment = "Unclassified"  # Default environment when none can be determined
+$EnvironmentTagName = "Environment"   # Default tag name for environment detection
+
 # Report visualization settings
-$GenerateHtmlReport = $true        # Generate HTML report with visualizations
-$IncludeCharts = $true             # Include charts in the HTML report
-$ChartPalette = @(                 # Color palette for charts (hex color codes)
+$GenerateHtmlReport = $true           # Generate HTML report with visualizations
+$IncludeCharts = $true                # Include charts in the HTML report
+$ChartPalette = @(                    # Color palette for charts (hex color codes)
     "#3366CC", "#DC3912", "#FF9900", "#109618", "#990099", 
     "#3B3EAC", "#0099C6", "#DD4477", "#66AA00", "#B82E2E"
 )
-$DefaultBusinessUnit = "Unassigned" # Default business unit name when none can be determined
+$DefaultBusinessUnit = "Unassigned"   # Default business unit name when none can be determined
 
 #endregion
 

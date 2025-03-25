@@ -24,7 +24,9 @@ Our analysis of example enterprise data shows:
 | Business Units | 8 |
 | Total Azure Resources | 1,222 |
 
-## Business Unit Cost Distribution
+## Cost Distribution Analysis
+
+### By Business Unit
 
 The costs are distributed across business units as follows:
 
@@ -40,6 +42,24 @@ The costs are distributed across business units as follows:
 | Executive | 25 | 1 | 0.00 |
 
 > **Note**: Costs are concentrated in the primary deployment subscription (IT Operations), with minimal impact to other business units.
+
+### By Environment Type
+
+The tool now classifies subscriptions into operational environments, providing insight into cost distribution across your SDLC:
+
+| Environment   | Subscriptions | Resources | Monthly Cost ($) |
+|---------------|---------------|-----------|------------------|
+| Production    | 3             | 437       | 742.35           |
+| Development   | 2             | 340       | 0.00             |
+| QA            | 1             | 95        | 0.00             |
+| Sandbox       | 1             | 115       | 0.00             |
+| Unclassified  | 3             | 235       | 0.00             |
+
+This environmental classification helps you:
+- Track spending across your development lifecycle
+- Identify high-cost environments for optimization
+- Ensure proper resource allocation across development stages
+- Monitor shifting costs as resources move from dev to production
 
 ## How Costs Are Calculated
 

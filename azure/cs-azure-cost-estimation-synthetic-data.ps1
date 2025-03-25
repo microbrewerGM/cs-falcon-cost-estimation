@@ -30,28 +30,32 @@ function New-SyntheticSubscriptionData {
     $subscriptions = @()
     
     # IT Operations - typically has larger footprint
-    $subscriptions += [PSCustomObject]@{
-        SubscriptionId = "00000000-0000-0000-0000-000000000001"
-        SubscriptionName = "IT-Operations-Primary"
-        Region = $regions[0]
-        BusinessUnit = $businessUnits[0]
-        ActivityLogCount = 8500
-        ResourceCount = 320
-        DailyAverage = 1214
-        EstimatedEventHubTUs = 6
-        EstimatedStorageGB = 42.5
-        EstimatedDailyEventHubIngress = 1456.2
-        EstimatedDailyEventCount = 1214
-        EstimatedFunctionAppInstances = 2
-        IsDefaultSubscription = $true
-        EstimatedMonthlyCost = 742.35
-    }
+        $subscriptions += [PSCustomObject]@{
+            SubscriptionId = "00000000-0000-0000-0000-000000000001"
+            SubscriptionName = "IT-Operations-Primary"
+            Region = $regions[0]
+            BusinessUnit = $businessUnits[0]
+            Environment = "Production"
+            EnvironmentColor = "#DC3912" # Red for production
+            ActivityLogCount = 8500
+            ResourceCount = 320
+            DailyAverage = 1214
+            EstimatedEventHubTUs = 6
+            EstimatedStorageGB = 42.5
+            EstimatedDailyEventHubIngress = 1456.2
+            EstimatedDailyEventCount = 1214
+            EstimatedFunctionAppInstances = 2
+            IsDefaultSubscription = $true
+            EstimatedMonthlyCost = 742.35
+        }
     
     $subscriptions += [PSCustomObject]@{
         SubscriptionId = "00000000-0000-0000-0000-000000000002"
         SubscriptionName = "IT-Operations-Secondary"
         Region = $regions[0]
         BusinessUnit = $businessUnits[0]
+        Environment = "Development"
+        EnvironmentColor = "#3366CC"  # Blue for dev
         ActivityLogCount = 3200
         ResourceCount = 110
         DailyAverage = 457
@@ -70,6 +74,8 @@ function New-SyntheticSubscriptionData {
         SubscriptionName = "Finance-Production"
         Region = $regions[1]
         BusinessUnit = $businessUnits[1]
+        Environment = "Production"
+        EnvironmentColor = "#DC3912"  # Red for production
         ActivityLogCount = 2100
         ResourceCount = 87
         DailyAverage = 300
