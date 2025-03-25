@@ -9,19 +9,16 @@ Add-Type -AssemblyName System.Web
 # 1. DO NOT USE THE DETAILEDOUTPUT PARAMETER with Get-AzActivityLog
 #    This parameter is deprecated and causes warnings.
 #
-# 2. PAGINATION LIMITATION AWARENESS
-#    The current implementation only retrieves up to 1000 logs per
-#    subscription due to API limitations. This is clearly communicated
-#    to users in the console output.
+# 2. ACTIVITY LOG COLLECTION APPROACHES
+#    Two methods are available for Activity Log collection:
+#    a) Simple method: Get-AzActivityLog with 1000 record limit
+#    b) Time-chunking method: Get-AllActivityLogsWithChunking breaks
+#       time periods into smaller chunks to bypass the 1000-record limit
 #
-# 3. REST API PAGINATION
+# 3. REST API PAGINATION CAUTION
 #    Do not implement custom REST API pagination without thorough testing.
 #    Previous attempts have resulted in 404 errors due to various issues
 #    with the REST API endpoints.
-#
-# 4. PENDING FUTURE IMPROVEMENTS
-#    We've preserved comment blocks for future pagination implementation
-#    to be tackled as a separate, well-tested enhancement.
 # ====================================================================
 
 <#
@@ -32,6 +29,11 @@ Add-Type -AssemblyName System.Web
     This PowerShell module handles collection of metrics and data required
     for accurate cost estimation of CrowdStrike resources in Azure.
 #>
+
+# Source extended activity log function with time-chunking
+$scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
+$activityLogsFilePath = Join-Path -Path $scriptPath -ChildPath "cs-azure-activity-logs.ps1"
+. $activityLogsFilePath
 
 function Get-ActivityLogMetrics {
     <#
@@ -123,101 +125,21 @@ function Get-ActivityLogMetrics {
         }
         
         # Use REST API with pagination since Get-AzActivityLog doesn't support continuation tokens
-        $allActivityLogs = @()
-        $pageCount = 0
-        $totalLogsRetrieved = 0
-        $filter = "eventTimestamp ge '${startTime}' and eventTimestamp le '${endTime}'"
-        $skipToken = $null
+        # Use the Enhanced Get-AllActivityLogsWithChunking function to retrieve ALL activity logs
+        # bypassing the 1000-record limitation by breaking the time period into smaller chunks
+        Write-Host "${subCountPrefix}Using time-chunking method to retrieve all Activity Logs (bypassing 1000-record limit)" -ForegroundColor Cyan
         
-        do {
-            $pageCount++
-            
-            # Update progress
-            Write-Progress @progressParams -Status "${subCountPrefix}Retrieving page $pageCount for subscription: $($currentContext.Subscription.Name)" -PercentComplete (20 + ($pageCount * 5) % 70)
-            
-            if ($OutputDir) {
-                Write-LogEntry -Message "${subCountPrefix}Retrieving Activity Log page $pageCount for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
-            }
-            
-            # Use a two-approach strategy:
-            # 1. For the first page, use Get-AzActivityLog which is known to work
-            # 2. For subsequent pages, try to use linkHeader/nextLink on the response
-            
-            try {
-                if ($pageCount -eq 1) {
-                    # For first page, use standard Get-AzActivityLog cmdlet
-                    Write-Host "${subCountPrefix}Using Get-AzActivityLog for initial page" -ForegroundColor DarkGray
-                    
-                    # IMPORTANT: DO NOT ADD DetailedOutput PARAMETER HERE!
-                    # The DetailedOutput parameter has been deprecated and causes warnings.
-                    # Only use the following parameters: StartTime, EndTime, MaxRecord
-                    # MaxRecord=1000 is the maximum allowed by the API and cannot be increased.
-                    #
-                    # !!! MAINTAINER WARNING !!!
-                    # DO NOT MODIFY THIS CALL TO ADD THE DETAILED OUTPUT PARAMETER!
-                    # DO NOT ATTEMPT TO IMPLEMENT CUSTOM PAGINATION WITH REST API UNTIL PROPERLY TESTED!
-                    # Current approach: Get first 1000 logs only. Pagination support needs proper REST API testing.
-                    $response = Get-AzActivityLog -StartTime $startTime -EndTime $endTime -MaxRecord 1000
-                    
-                    # Process the response directly
-                    $logsPage = $response
-                    $allActivityLogs += $logsPage
-                    $totalLogsRetrieved += $logsPage.Count
-                    
-                    if ($OutputDir) {
-                        Write-LogEntry -Message "${subCountPrefix}Retrieved $($logsPage.Count) activity logs from page 1" -OutputDir $OutputDir
-                    }
-                    
-                    Write-Host "${subCountPrefix}Retrieved $($logsPage.Count) activity logs from page 1" -ForegroundColor Cyan
-                    
-                    # Check if we have a complete result or need paging
-                    if ($logsPage.Count -eq 1000) {
-                        Write-Host "${subCountPrefix}Retrieved maximum records (1000), which is the API limit." -ForegroundColor Yellow
-                        
-                        # Stop here since we can't reliably get next pages without the proper API implementation
-                        # Future enhancement: Implement proper REST API pagination that's been thoroughly tested
-                        Write-Host "${subCountPrefix}⚠️ LIMITATION: Only the first 1000 logs will be retrieved per subscription." -ForegroundColor Yellow
-                        Write-Host "${subCountPrefix}This is an Azure API limitation that cannot be bypassed with the current implementation." -ForegroundColor Yellow
-                        if ($OutputDir) {
-                            Write-LogEntry -Message "${subCountPrefix}LIMITATION: Only the first 1000 logs will be retrieved per subscription (Azure API limit)." -Level "WARNING" -OutputDir $OutputDir
-                        }
-                        
-                        # Set to null to break the loop after first page
-                        $logsPage = @()
-                    }
-                }
-                else {
-                    # For subsequent pages, we would use nextLink, but this is currently not reliable
-                    # Setting empty results to break the loop
-                    $logsPage = @()
-                }
-                
-                # For REST API responses (future implementation), we would process differently
-                # This section is preserved for future implementation of proper paging
-                # Currently, we only process the logs from Get-AzActivityLog 
-                #
-                # TODO: Future pagination implementation notes
-                # 1. Test thoroughly with various subscriptions and log volumes
-                # 2. Use proper URI construction with System.Web.HttpUtility.UrlEncode
-                # 3. Use Invoke-AzRestMethod with full URL rather than Path
-                # 4. Properly extract and use skipToken from nextLink
-                # 5. Handle errors gracefully with clear messages
-            }
-            catch {
-                Write-Warning "${subCountPrefix}Error calling Azure REST API for activity logs: $($_.Exception.Message)"
-                if ($OutputDir) {
-                    Write-LogEntry -Message "${subCountPrefix}Error calling Azure REST API for activity logs: $($_.Exception.Message)" -Level 'ERROR' -OutputDir $OutputDir
-                }
-                break
-            }
-            
-        } while ($logsPage.Count -gt 0 -and $skipToken)
-        
-        # Assign the properly paginated logs
-        $activityLogs = $allActivityLogs
+        $activityLogs = Get-AllActivityLogsWithChunking `
+            -SubscriptionId $SubscriptionId `
+            -StartTime $startTime `
+            -EndTime $endTime `
+            -InitialChunkSizeHours 24 `
+            -OutputDir $OutputDir `
+            -CurrentSubscriptionNumber $CurrentSubscriptionNumber `
+            -TotalSubscriptions $TotalSubscriptions
         
         Write-Progress @progressParams -PercentComplete 100 -Completed
-        Write-Host "${subCountPrefix}Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) log entries across $pageCount page(s)." -ForegroundColor Green
+        Write-Host "${subCountPrefix}Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) total log entries." -ForegroundColor Green
         
         # Write to log file if OutputDir is provided
         if ($OutputDir) {
