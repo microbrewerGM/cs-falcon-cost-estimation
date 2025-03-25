@@ -467,7 +467,7 @@ if ($ParallelExecution -and $subscriptionCount -gt 1) {
                 "Total" = $totalSubs
                 "Processed" = $processedCount
                 "Percentage" = [math]::Round(($processedCount / $totalSubs) * 100)
-                "CurrentlyProcessing" = $subscription.Name
+                "CurrentlyProcessing" = "$($subscription.Name)"
             }
             $status | ConvertTo-Json | Out-File -FilePath $StatusFilePath -Force
             
@@ -505,7 +505,7 @@ if ($ParallelExecution -and $subscriptionCount -gt 1) {
             "Total" = $totalSubs
             "Processed" = $processedCount
             "Percentage" = [math]::Round(($processedCount / $totalSubs) * 100)
-            "CurrentlyProcessing" = $subscription.Name
+            "CurrentlyProcessing" = "$($subscription.Name)"
         }
         $status | ConvertTo-Json | Out-File -FilePath $StatusFilePath -Force
         
@@ -616,8 +616,8 @@ $totalAnnualEstimate = $totalEstimate * 12
 
 Write-Log "Cost Estimation Summary:" -Level 'SUCCESS' -Category 'Summary'
 Write-Log "  - Total subscriptions analyzed: $($subscriptionEstimates.Count)" -Level 'SUCCESS' -Category 'Summary'
-Write-Log "  - Total monthly cost estimate: $($totalEstimate)" -Level 'SUCCESS' -Category 'Summary'
-Write-Log "  - Total annual cost estimate: $($totalAnnualEstimate)" -Level 'SUCCESS' -Category 'Summary'
+Write-Log "  - Total monthly cost estimate: $totalEstimate" -Level 'SUCCESS' -Category 'Summary'
+Write-Log "  - Total annual cost estimate: $totalAnnualEstimate" -Level 'SUCCESS' -Category 'Summary'
 Write-Log "  - Business units identified: $($businessUnitSummary.Keys.Count)" -Level 'SUCCESS' -Category 'Summary'
 if ($IncludeManagementGroups -and $managementGroupSummary.Count -gt 0) {
     Write-Log "  - Management groups analyzed: $($managementGroupSummary.Keys.Count)" -Level 'SUCCESS' -Category 'Summary'
