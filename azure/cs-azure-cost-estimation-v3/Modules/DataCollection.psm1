@@ -1,4 +1,4 @@
-# Streamlined data collection module for CrowdStrike Azure Cost Estimation Tool v3
+# Data collection module for CrowdStrike Azure Cost Estimation Tool v3
 
 # Function to get metadata about subscriptions
 function Get-SubscriptionMetadata {
@@ -215,7 +215,7 @@ function Get-AllCostEstimationData {
     # Get all subscriptions from Azure
     $subscriptions = Get-SubscriptionList
     
-    if ($subscriptions -eq $null -or $subscriptions.Count -eq 0) {
+    if ($null -eq $subscriptions -or $subscriptions.Count -eq 0) {
         Write-Log "No subscriptions found" -Level 'ERROR' -Category 'DataCollection'
         
         # Return a minimal structure
@@ -251,11 +251,38 @@ function Get-AllCostEstimationData {
     
     foreach ($subscription in $subscriptions) {
         $current++
-        $subId = $subscription.Id
-        $subName = $subscription.Name
         
-        $activityLogData = Get-SubscriptionActivityLogs -SubscriptionId $subId -DaysToAnalyze $DaysToAnalyze -SampleSize $SampleLogSize
-        $allData.ActivityLogs[$subId] = $activityLogData
+        # Skip subscriptions with empty IDs
+        if ([string]::IsNullOrEmpty($subscription.Id)) {
+            Write-Log "Skipping subscription with empty ID" -Level 'WARNING' -Category 'DataCollection'
+            continue
+        }
+        
+        $subId = $subscription.Id
+        $subName = "Unknown"
+        if (-not [string]::IsNullOrEmpty($subscription.Name)) {
+            $subName = $subscription.Name
+        }
+        
+        Write-Log "Processing subscription $subId ($subName)" -Level 'INFO' -Category 'DataCollection'
+        
+        try {
+            $activityLogData = Get-SubscriptionActivityLogs -SubscriptionId $subId -DaysToAnalyze $DaysToAnalyze -SampleSize $SampleLogSize
+            $allData.ActivityLogs[$subId] = $activityLogData
+        }
+        catch {
+            Write-Log "Error collecting activity logs for subscription $subId" -Level 'WARNING' -Category 'DataCollection'
+            # Create empty activity log data with default values
+            $allData.ActivityLogs[$subId] = @{
+                LogCount = 0
+                DailyAverage = 0
+                AvgLogSizeKB = Get-ConfigSetting -Name 'DefaultActivityLogSizeKB' -DefaultValue 2.5
+                SampledLogCount = 0
+                ResourceProviders = @{}
+                OperationNames = @{}
+                LogsByDay = @{}
+            }
+        }
     }
     
     # Return the data as a properly typed hashtable

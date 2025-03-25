@@ -212,7 +212,27 @@ function Start-CostEstimation {
         }
     }
     
-    $totalSubscriptions = if ($estimates) { $estimates.Count } else { 0 }
+    # Count actual valid subscriptions from the collected data
+    $validSubscriptionCount = 0
+    if ($collectedData -and $collectedData.Subscriptions) {
+        $validSubscriptions = $collectedData.Subscriptions | Where-Object { -not [string]::IsNullOrEmpty($_.Id) }
+        $validSubscriptionCount = if ($validSubscriptions) { $validSubscriptions.Count } else { 0 }
+    }
+    
+    # Get count of activity logs to verify actual processed subscriptions
+    $processedSubscriptionCount = 0
+    if ($collectedData -and $collectedData.ActivityLogs) {
+        $processedSubscriptionCount = $collectedData.ActivityLogs.Count
+    }
+    
+    # Use the most accurate count for reporting
+    $totalSubscriptions = if ($estimates -and $estimates.Count -gt 0) { 
+        $estimates.Count 
+    } elseif ($processedSubscriptionCount -gt 0) {
+        $processedSubscriptionCount
+    } else { 
+        $validSubscriptionCount 
+    }
     
     Write-Host "`n=================================" -ForegroundColor Green
     Write-Host "Cost Estimation Complete" -ForegroundColor Green

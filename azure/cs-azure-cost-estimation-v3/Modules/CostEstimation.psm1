@@ -292,15 +292,32 @@ function Get-AllSubscriptionsCostEstimate {
 # Function to aggregate cost estimates for business units
 function Get-BusinessUnitCostSummary {
     param (
-        [Parameter(Mandatory = $true)]
-        [array]$SubscriptionEstimates
+        [Parameter(Mandatory = $false)]
+        [array]$SubscriptionEstimates = @()
     )
+    
+    # Return empty hashtable if no subscription estimates provided
+    if ($null -eq $SubscriptionEstimates -or $SubscriptionEstimates.Count -eq 0) {
+        Write-Log "No subscription estimates provided to summarize" -Level 'WARNING' -Category 'CostEstimation'
+        return @{}
+    }
     
     $buSummary = @{}
     
     foreach ($estimate in $SubscriptionEstimates) {
-        $bu = $estimate.BusinessUnit
+        # Skip null estimates
+        if ($null -eq $estimate) {
+            continue
+        }
         
+        # Use default business unit if not present
+        $bu = if ($null -eq $estimate.BusinessUnit) {
+            Get-ConfigSetting -Name 'DefaultBusinessUnit' -DefaultValue 'Unassigned'
+        } else {
+            $estimate.BusinessUnit
+        }
+        
+        # Initialize business unit if not already tracked
         if (-not $buSummary.ContainsKey($bu)) {
             $buSummary[$bu] = @{
                 BusinessUnit = $bu
@@ -314,41 +331,67 @@ function Get-BusinessUnitCostSummary {
             }
         }
         
+        # Increment counters safely, checking for null values
         $buSummary[$bu].SubscriptionCount++
-        $buSummary[$bu].TotalMonthlyCost += $estimate.MonthlyCost
-        $buSummary[$bu].EventsPerDay += $estimate.LogVolume.TotalEventsPerDay
-        $buSummary[$bu].StoragePerMonth += $estimate.Requirements.MonthlyStorageUsageGB
         
-        if ($estimate.IsProduction) {
-            $buSummary[$bu].ProductionCost += $estimate.MonthlyCost
+        # Add cost data with null checks
+        $monthlyCost = if ($null -eq $estimate.MonthlyCost) { 0 } else { $estimate.MonthlyCost }
+        $buSummary[$bu].TotalMonthlyCost += $monthlyCost
+        
+        # Get events per day safely
+        $eventsPerDay = if ($null -eq $estimate.LogVolume -or $null -eq $estimate.LogVolume.TotalEventsPerDay) { 
+            0 
+        } else { 
+            $estimate.LogVolume.TotalEventsPerDay 
         }
-        else {
-            $buSummary[$bu].NonProductionCost += $estimate.MonthlyCost
+        $buSummary[$bu].EventsPerDay += $eventsPerDay
+        
+        # Get storage safely
+        $storagePerMonth = if ($null -eq $estimate.Requirements -or $null -eq $estimate.Requirements.MonthlyStorageUsageGB) { 
+            0 
+        } else { 
+            $estimate.Requirements.MonthlyStorageUsageGB 
+        }
+        $buSummary[$bu].StoragePerMonth += $storagePerMonth
+        
+        # Split costs by environment type
+        $isProduction = if ($null -eq $estimate.IsProduction) { $false } else { $estimate.IsProduction }
+        if ($isProduction) {
+            $buSummary[$bu].ProductionCost += $monthlyCost
+        } else {
+            $buSummary[$bu].NonProductionCost += $monthlyCost
         }
         
-        $buSummary[$bu].Subscriptions[$estimate.SubscriptionId] = @{
-            Name = $estimate.SubscriptionName
-            MonthlyCost = $estimate.MonthlyCost
-            IsProduction = $estimate.IsProduction
-            EventsPerDay = $estimate.LogVolume.TotalEventsPerDay
+        # Skip subscription details if ID is missing
+        if ($null -ne $estimate.SubscriptionId) {
+            $buSummary[$bu].Subscriptions[$estimate.SubscriptionId] = @{
+                Name = if ($null -eq $estimate.SubscriptionName) { "Unknown" } else { $estimate.SubscriptionName }
+                MonthlyCost = $monthlyCost
+                IsProduction = $isProduction
+                EventsPerDay = $eventsPerDay
+            }
         }
     }
     
-    # Round values and calculate percentages
-    $totalCost = ($buSummary.Values | Measure-Object -Property TotalMonthlyCost -Sum).Sum
-    
-    foreach ($bu in $buSummary.Keys) {
-        $buSummary[$bu].TotalMonthlyCost = [math]::Round($buSummary[$bu].TotalMonthlyCost, 2)
-        $buSummary[$bu].ProductionCost = [math]::Round($buSummary[$bu].ProductionCost, 2)
-        $buSummary[$bu].NonProductionCost = [math]::Round($buSummary[$bu].NonProductionCost, 2)
-        $buSummary[$bu].EventsPerDay = [math]::Round($buSummary[$bu].EventsPerDay, 0)
-        $buSummary[$bu].StoragePerMonth = [math]::Round($buSummary[$bu].StoragePerMonth, 2)
+    # If we have business units to process
+    if ($buSummary.Count -gt 0) {
+        # Round values and calculate percentages
+        $totalCostData = $buSummary.Values | Measure-Object -Property TotalMonthlyCost -Sum
+        $totalCost = if ($null -eq $totalCostData -or $null -eq $totalCostData.Sum) { 0 } else { $totalCostData.Sum }
         
-        if ($totalCost -gt 0) {
-            $buSummary[$bu].PercentOfTotal = [math]::Round(($buSummary[$bu].TotalMonthlyCost / $totalCost) * 100, 1)
-        }
-        else {
-            $buSummary[$bu].PercentOfTotal = 0
+        foreach ($bu in $buSummary.Keys) {
+            # Safely round values with null checks
+            $buSummary[$bu].TotalMonthlyCost = [math]::Round($buSummary[$bu].TotalMonthlyCost, 2)
+            $buSummary[$bu].ProductionCost = [math]::Round($buSummary[$bu].ProductionCost, 2)
+            $buSummary[$bu].NonProductionCost = [math]::Round($buSummary[$bu].NonProductionCost, 2)
+            $buSummary[$bu].EventsPerDay = [math]::Round($buSummary[$bu].EventsPerDay, 0)
+            $buSummary[$bu].StoragePerMonth = [math]::Round($buSummary[$bu].StoragePerMonth, 2)
+            
+            if ($totalCost -gt 0) {
+                $buSummary[$bu].PercentOfTotal = [math]::Round(($buSummary[$bu].TotalMonthlyCost / $totalCost) * 100, 1)
+            } else {
+                $buSummary[$bu].PercentOfTotal = 0
+            }
         }
     }
     
