@@ -124,19 +124,25 @@ function Get-ActivityLogMetrics {
             Write-LogEntry -Message "${subCountPrefix}Starting paginated Activity Log retrieval for subscription: $($currentContext.Subscription.Name)" -OutputDir $OutputDir
         }
         
-        # Use REST API with pagination since Get-AzActivityLog doesn't support continuation tokens
         # Use the Enhanced Get-AllActivityLogsWithChunking function to retrieve ALL activity logs
         # bypassing the 1000-record limitation by breaking the time period into smaller chunks
         Write-Host "${subCountPrefix}Using time-chunking method to retrieve all Activity Logs (bypassing 1000-record limit)" -ForegroundColor Cyan
         
-        $activityLogs = Get-AllActivityLogsWithChunking `
-            -SubscriptionId $SubscriptionId `
-            -StartTime $startTime `
-            -EndTime $endTime `
-            -InitialChunkSizeHours 24 `
-            -OutputDir $OutputDir `
-            -CurrentSubscriptionNumber $CurrentSubscriptionNumber `
-            -TotalSubscriptions $TotalSubscriptions
+        # Configure parameters for activity log collection
+        $logParams = @{
+            SubscriptionId = $SubscriptionId
+            StartTime = $startTime
+            EndTime = $endTime
+            InitialChunkSizeHours = 24
+            MinChunkSizeHours = 1
+            MaxChunkSizeHours = 48
+            OutputDir = $OutputDir
+            CurrentSubscriptionNumber = $CurrentSubscriptionNumber
+            TotalSubscriptions = $TotalSubscriptions
+        }
+        
+        # Call the function with parameter splatting for cleaner code
+        $activityLogs = Get-AllActivityLogsWithChunking @logParams
         
         Write-Progress @progressParams -PercentComplete 100 -Completed
         Write-Host "${subCountPrefix}Completed Activity Log query for subscription: $($currentContext.Subscription.Name). Found $($activityLogs.Count) total log entries." -ForegroundColor Green
